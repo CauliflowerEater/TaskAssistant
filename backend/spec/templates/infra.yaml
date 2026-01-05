@@ -1,0 +1,125 @@
+type: infra
+id: <AdapterName>                           # e.g. PostgresProfileRepoAdapter / HttpPaymentAdapter
+version: v1
+owner: <team-or-module>                     # optional
+status: draft                               # draft | active | deprecated
+since: "2026-01-04"                         # optional
+
+summary: >
+  <一句话说明该 adapter 通过何种外部系统兑现哪个 port>
+
+implements:
+  # 该 adapter 兑现哪些 port 的哪个版本（一对多允许）
+  - offer: <PortOfferId>                    # e.g. ProfileRepoPort.offer
+    version: v1
+    clauses: [<ClauseId>, <ClauseId>]       # optional: 声明覆盖哪些条款
+  # - offer: IdempotencyPort.offer
+  #   version: v1
+  #   clauses: [I1, I3, I4]
+
+bindings:
+  # 外部依赖绑定（允许出现 SDK/DB/HTTP 的具体信息）
+  kind: db                                  # db | http | mq | cache | file | other
+  target:
+    name: <system>                          # e.g. postgres | redis | stripe-api
+    endpoint: <endpoint>                    # optional: host:port / baseUrl
+  auth:
+    mode: <mode>                            # none | api-key | oauth2 | mTLS | custom
+  timeout_ms: 3000                          # optional
+  retry:
+    enabled: false
+    max_attempts: 0
+    backoff_ms: 0
+
+policy:
+  # 1) 数据模型/协议细节（实现层）
+  data:
+    schema:
+      tables: []                            # e.g. [profiles, idempotency_records]
+      indexes: []                           # e.g. unique(scope, key)
+    transaction:
+      supported: true
+      isolation: <level>                    # read_committed | repeatable_read | serializable | n/a
+    notes: >
+      <表结构、索引、事务边界等实现细节>
+
+  # 2) 并发控制实现（如乐观锁/悲观锁/无锁）
+  concurrency:
+    strategy: optimistic-lock               # optimistic-lock | pessimistic-lock | none | other
+    fields:
+      - version                             # e.g. version / updatedAt
+    retry_on_conflict:
+      enabled: false
+      max_attempts: 0
+      backoff_ms: 0
+    notes: >
+      <具体 SQL/JPA 策略、冲突处理方式>
+
+  # 3) 幂等实现（若该 adapter 兑现的是 IdempotencyPort 或包含幂等表）
+  idempotency:
+    strategy: request-level                 # request-level | step-level | none
+    key:
+      scope_fields: [<field>]               # e.g. [userId]
+      key_field: idempotencyKey
+    record:
+      states: [IN_PROGRESS, SUCCEEDED, FAILED]
+      ttl_seconds: 86400
+    atomicity:
+      acquire: unique-index                 # unique-index | txn-lock | compare-and-set | other
+      result_write: same-txn-if-possible    # same-txn-if-possible | eventual
+    notes: >
+      <幂等表结构、唯一约束、占位与结果落库策略>
+
+  # 4) 原始信号 -> 技术异常（关键：隔离污染）
+  # 允许出现 SDK 异常名/HTTP 状态码/DB 错误码，但输出必须是 TechnicalException.*
+  error_translation:
+    rules:
+      - from:
+          kind: http_status                 # http_status | sdk_exception | db_error_code | io_exception | other
+          value: 504
+        to:
+          technical_exception: TIMEOUT      # TechnicalException enum value
+          retryable: true
+        note: <why>
+      - from:
+          kind: sdk_exception
+          value: <SdkExceptionClassName>    # e.g. SocketTimeoutException
+        to:
+          technical_exception: TIMEOUT
+          retryable: true
+        note: <why>
+      - from:
+          kind: db_error_code
+          value: <db-code>                  # e.g. unique_violation
+        to:
+          technical_exception: CONFLICT
+          retryable: false
+        note: <why>
+
+  # 5) 可观测性与安全（infra 常见要求）
+  observability:
+    tracing:
+      inject: true
+      fields: [traceId, spanId]
+    metrics:
+      - name: <metricName>
+        type: counter
+    logging:
+      pii: prohibited
+      redact_fields: [authorization, token]
+    notes: >
+      <日志/链路/指标策略>
+
+assumption:
+  # infra 对环境/依赖的前置条件（不向上暴露，仅供运维/开发理解）
+  environment:
+    - <assumption>                          # e.g. db has unique index(scope, key)
+    - <assumption>
+
+rollout:
+  compatibility: compatible                 # compatible | breaking
+  migration_notes: >
+    <外部依赖变更/表结构迁移/配置迁移>
+
+notes:
+  - <anything else>

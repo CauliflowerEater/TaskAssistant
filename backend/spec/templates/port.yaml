@@ -1,0 +1,111 @@
+type: port
+id: <PortName>                            # e.g. ProfileRepoPort / IdempotencyPort
+version: v1
+owner: <team-or-module>                   # optional
+status: draft                             # draft | active | deprecated
+since: "2026-01-04"                       # optional (ISO date)
+
+summary: >
+  <一句话描述该 port 提供的抽象能力，不包含实现细节>
+
+offer:
+  # 1) 该 port 的抽象能力条款（可被上游依赖引用）
+  # 建议：每个条款都有稳定 ClauseId，用于 Assumption 引用
+  clauses:
+    P1:
+      title: <clause-title>               # e.g. atomic-update
+      desc: >
+        <对上层可依赖的事实：原子性/可见性/幂等能力/并发语义等>
+      guarantees:
+        - <guarantee>                     # optional: bullet list
+      non_guarantees:
+        - <non-guarantee>                 # optional: explicitly not guaranteed
+      observability:
+        emitted_events: []                # optional
+        trace_fields: []                  # optional
+
+    P2:
+      title: <clause-title>
+      desc: >
+        <...>
+
+  # 2) API 形态（方法清单）
+  # 注意：这里只定义“语义 API”，不是实现 API
+  operations:
+    - name: <methodName>                  # e.g. updateProfile
+      input:
+        - name: <param>
+          type: <Type>
+          required: true
+          desc: <...>
+      output:
+        success:
+          type: <Type>
+          desc: <...>
+        failure:
+          model: <ErrorModel>             # optional
+      effects:
+        - kind: write_db                  # write_db | call_http | publish_event | ...
+          desc: <...>
+      semantics:
+        idempotency:
+          supported: false                # true/false
+          scope: <scope>                  # optional
+          notes: >
+            <若支持幂等，描述“对上层可依赖事实”，不写实现>
+        consistency:
+          level: strong                   # strong | eventual | unknown
+          notes: >
+            <对上层可依赖的时序事实>
+        concurrency:
+          conflict_detectable: true
+          exposed_as:
+            kind: technical_exception     # technical_exception | error_code
+            value: <TechnicalException>   # e.g. CONCURRENCY_CONFLICT
+          notes: >
+            <是否内部重试、是否可能静默覆盖等>
+
+      # 3) 技术异常类型（抽象层），禁止出现 SDK 原始异常/HTTP 状态码
+      exceptions:
+        - id: <TechnicalExceptionType>    # e.g. TIMEOUT
+          when: <condition>
+          retryable: false
+        - id: <TechnicalExceptionType>    # e.g. DEPENDENCY_UNAVAILABLE
+          when: <condition>
+          retryable: true
+
+  # 4) 通用约束（对所有 operations 生效）
+  constraints:
+    input_validation:
+      minimal_defensive_checks: true
+      notes: >
+        <port 层做“契约防御性校验”，不做业务语义校验>
+    retry_semantics:
+      caller_may_retry: false
+      safe_when: []
+      notes: >
+        <port 层对“调用方重试是否安全”的约束，如果要声明请写清楚条件>
+    observability:
+      trace_required: true
+      metrics: []
+      logs:
+        pii: prohibited
+
+assumption:
+  # port 通常不需要 assumption
+  # 若存在，仅限于对调用方行为的最低假设（例如必须提供 key）
+  caller_assumptions:
+    - <assumption>                        # optional
+
+# NOTE:
+# Port 层不包含 Implementation Policy。
+# Port 只声明“能力语义的承诺（Offer）”与最小调用方前置条件（Assumption），
+# 任何实现策略、存储选型、并发控制、重试、幂等实现等，均属于 Infra/Adapter 层职责。
+
+rollout:
+  compatibility: compatible               # compatible | breaking
+  migration_notes: >
+    <若 breaking，说明迁移方式>
+
+notes:
+  - <anything else>

@@ -1,0 +1,161 @@
+type: usecase
+id: <UsecaseName>                       # e.g. UpdateProfile
+version: v1
+owner: <team-or-module>                  # optional
+status: draft                            # draft | active | deprecated
+since: "2026-01-04"                      # optional (ISO date)
+
+summary: >
+  <一句话说明该用例做什么；只写业务语义，不写实现>
+
+offer:
+  # 1) 输入输出：对上层的语义承诺
+  input:
+    - name: <paramName>
+      type: <Type>
+      required: true
+      desc: <what>
+    # - name: idempotencyKey
+    #   type: string
+    #   required: false
+    #   desc: 用于请求级幂等
+  output:
+    success:
+      type: <Type>                       # e.g. ProfileViewDTO
+      desc: <what>
+    failure:
+      model: <ErrorModel>                # e.g. ApiError / BusinessError
+      desc: <what>
+
+  # 2) 副作用与边界：对调用方“可依赖事实”
+  effects:
+    - name: <effectName>                 # e.g. update-profile
+      kind: write_db                     # write_db | call_http | publish_event | send_email | ...
+      desc: <observable effect>
+
+  # 3) 幂等语义（承诺“是什么”，不承诺“怎么做”）
+  idempotency:
+    supported: false                     # true/false
+    key:
+      required: false
+      name: idempotencyKey
+      scope: <scope>                     # e.g. user | tenant | global | (custom)
+    semantics:
+      duplicate_request: same-result     # same-result | same-effect | reject | return-in-progress
+      concurrent_request: return-in-progress
+    notes: >
+      <重复请求的可观测行为（状态码/返回体/异常）>
+
+  # 4) 一致性语义（承诺“调用方能依赖的时序事实”）
+  consistency:
+    level: strong                        # strong | eventual | unknown
+    read_your_writes: true               # 调用方是否能立即读到变更
+    completion:
+      mode: sync                         # sync | accept-async
+      accepted_response:                 # mode=accept-async 时使用
+        enabled: false
+        type: <Type>                     # e.g. OperationAccepted{operationId}
+    notes: >
+      <如果最终一致：需要状态机/对账/补偿，写清楚对上层的可见语义>
+
+  # 5) 并发语义（承诺冲突是否可检测 & 如何对上层呈现）
+  concurrency:
+    conflict_detectable: true
+    on_conflict: raise                   # raise | retry | last-write-wins
+    exposed_as:
+      kind: business_exception           # business_exception | error_code | status_code
+      value: <ExceptionOrCode>           # e.g. ConcurrentModification | CONFLICT | 409
+    notes: >
+      <是否内部重试、重试上限、是否会静默覆盖等“可依赖事实”>
+
+  # 6) 重试语义（上层是否可安全重试）
+  retry:
+    caller_may_retry: false
+    safe_when:
+      - <condition>                      # e.g. failure_semantic == RETRYABLE
+    notes: >
+      <何时允许重试、何时禁止重试>
+
+  # 7) 失败与异常（仅业务异常 / 对上层可见）
+  #   注意：这里不出现 SDK 原始异常；下游技术异常应先在 adapter/support 归一化
+  exceptions:
+    - id: <BusinessExceptionName>        # e.g. ProfileNotFound
+      when: <condition>                  # e.g. user profile missing
+      exposed_as:
+        kind: business_exception
+        value: <BusinessExceptionName>
+    - id: <BusinessExceptionName>
+      when: <condition>
+      exposed_as:
+        kind: error_code
+        value: <ERROR_CODE>
+
+  # 8) 可观测性（可选，但很实用）
+  observability:
+    trace:
+      required: true
+      fields:
+        - traceId
+        - userId
+    metrics:
+      - name: <metricName>
+        type: counter                    # counter | gauge | histogram
+        desc: <what>
+    logs:
+      pii: prohibited                    # allowed | prohibited
+      redaction: required
+
+assumption:
+  # Assumption 只引用下游 Offer 的条款标识，不复制内容
+  dependsOn:
+    - offer: <PortOfferId>               # e.g. IdempotencyPort.offer
+      version: v1
+      clauses: [<ClauseId>, <ClauseId>]  # e.g. [I1, I3, I4]
+      purpose: >
+        <我依赖这些条款来保证什么语义>
+    - offer: <PortOfferId>
+      version: v1
+      clauses: [<ClauseId>]
+      purpose: >
+        <...>
+
+  # 对调用方的最低假设（可选，仅当不写会导致语义无法成立）
+  caller_assumptions:
+    - <assumption>                       # e.g. client retries may happen
+    - <assumption>
+
+policy:
+  # policy 只写实现决策：如何在不改变 offer 承诺的前提下落地
+  idempotency:
+    strategy: none                       # none | request-level | step-level
+    store: <IdempotencyPort>             # e.g. IdempotencyPort
+    ttl_seconds: 86400
+    notes: >
+      <幂等表/缓存/透传下游幂等等决策细节>
+
+  transaction:
+    boundary: single-db                  # single-db | multi-resource
+    notes: >
+      <事务边界、是否 outbox、是否 saga 等>
+
+  concurrency:
+    strategy: optimistic-lock            # optimistic-lock | pessimistic-lock | none
+    retry:
+      enabled: false
+      max_attempts: 0
+      backoff_ms: 0
+
+  error_mapping:
+    # 仅允许引用：port 技术异常类型 / failure semantic（来自 support classifier）
+    rules:
+      - from: <FailureSemantic>          # e.g. UNKNOWN_RESULT | RETRYABLE | NON_RETRYABLE
+        to: <BusinessExceptionOrResponse>
+        note: <why>
+
+  rollout:
+    compatibility: compatible            # compatible | breaking
+    migration_notes: >
+      <若 breaking，写清楚迁移策略>
+
+notes:
+  - <anything else>

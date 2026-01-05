@@ -1,0 +1,67 @@
+type: domain
+id: <DomainServiceOrAggregateName>        # e.g. ProfileRules / OrderStateMachine
+version: v1
+owner: <team-or-module>                   # optional
+status: draft
+since: "2026-01-04"                       # optional
+
+summary: >
+  <一句话说明该 domain 规则/服务的职责>
+
+offer:
+  clauses:
+    D1:
+      title: <clause-title>               # e.g. validate-profile-patch
+      desc: >
+        <对调用方可依赖的事实：输入约束、输出含义、规则稳定性>
+      guarantees:
+        - <guarantee>
+      non_guarantees:
+        - <non-guarantee>
+
+  operations:
+    - name: <methodName>                  # e.g. validate / decide / nextState
+      input:
+        - name: <param>
+          type: <Type>
+          required: true
+          desc: <...>
+      output:
+        success:
+          type: <Type>                    # e.g. ValidationResult / Decision / NextState
+          desc: <...>
+        failure:
+          model: <ErrorModel>             # optional, often domain error
+      semantics:
+        purity: pure                      # pure | deterministic-with-clock
+        side_effects: none                # MUST be none
+      errors:
+        - id: <DomainError>               # e.g. INVALID_EMAIL / RULE_VIOLATION
+          when: <condition>
+
+  constraints:
+    side_effects:
+      allowed: false                      # MUST be false
+    dependencies:
+      port_calls_allowed: false           # MUST be false
+      infra_calls_allowed: false          # MUST be false
+    determinism:
+      requires_clock: false               # if true, accept Clock as input param
+
+assumption:
+  # domain 默认无 assumption（不依赖外部）
+  caller_assumptions: []                  # optional, e.g. inputs are normalized
+
+policy:
+  # domain policy 只允许“算法/规则实现细节”，不允许出现外部交互策略
+  algorithm:
+    strategy: <strategy>                  # e.g. ruleset-v1 | scoring | state-machine
+    notes: >
+      <纯算法细节，如优先级、权重、边界情况处理>
+
+rollout:
+  compatibility: compatible
+  migration_notes: ""
+
+notes:
+  - <anything else>
