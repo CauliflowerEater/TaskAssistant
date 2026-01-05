@@ -1,0 +1,167 @@
+type: usecase
+id: TaskSplitUseCase                       # e.g. UpdateProfile
+version: v1
+owner: <shawn>                  # optional
+status: draft                            # draft | active | deprecated
+since: "2026-01-05"                      # optional (ISO date)
+
+summary: >
+  接收用户自然语言任务描述 + schema(config)，调用 LLM 生成结构化 JSON，并对输出做格式校验，最后返回“已校验通过”的结构化结果；否则按失败语义返回；
+
+offer:
+  input:
+    - name: taskSplitRequest
+      type: TaskSplitRequestDTO
+      required: true
+      desc: 任务拆分请求
+      subfields:
+        - name: userId
+          type: string
+          required: true
+          desc: 用户ID
+        - name: idempotencyKey
+          type: string
+          required: true
+          desc: 幂等键
+        - name: taskText
+          type: string
+          required: true
+          desc: 任务文本，长度上限 1000 字符
+        - name: schemaId
+          type: string
+          required: true
+          desc: 任务schema ID，用于唯一标识任务schema，由config决定
+
+  output:
+    success:
+      type: TaskSplitResultDTO                # e.g. TaskSplitResultDTO[]
+      desc: 任务拆分结果列表，每个元素为任务拆分结果的描述
+      subfields:
+        - name: taskSplitResults
+          type: string[]
+          required: true
+          desc: 任务拆分结果列表，每个元素为任务拆分结果,json格式;schema取决于schemaId
+    failure:
+      model: TaskSplitException
+      desc: 任务拆分失败
+
+  effects:
+    - name: call_llm                     # e.g. update-profile
+      kind: third_party_sdk                    # write_db | call_http | publish_event | send_email | ...
+      desc: 调用LLM生成结构化JSON
+    - name: write_idempotency_record
+      kind: write_db
+      desc: 写入幂等记录，用于防止重复请求
+
+  idempotency:
+    supported: true                     # true/false
+    key:
+      required: true
+      name: idempotencyKey
+      scope: user                     # e.g. user | tenant | global | (custom)
+    semantics:
+      duplicate_request: same-result     # same-result | same-effect | reject | return-in-progress
+      concurrent_request: return-in-progress
+    notes: >
+      并发处理仅在 (userId + idempotencyKey) 维度定义：
+    - 并发相同 key：返回 in-progress 或相同结果
+    - 不对同一用户不同 key 的并发请求提供额外冲突语义承诺
+
+  consistency:
+    level: strong                        # strong | eventual | unknown
+    read_your_writes: true               # 调用方是否能立即读到变更
+    completion:
+      mode: sync                         # sync | accept-async
+
+
+  # 6) 重试语义（上层是否可安全重试）
+  retry:
+    caller_may_retry: false
+    safe_when:
+      - <condition>                      # e.g. failure_semantic == RETRYABLE
+    notes: >
+      <何时允许重试、何时禁止重试>
+
+  # 7) 失败与异常（仅业务异常 / 对上层可见）
+  #   注意：这里不出现 SDK 原始异常；下游技术异常应先在 adapter/support 归一化
+  exceptions:
+    - id: <BusinessExceptionName>        # e.g. ProfileNotFound
+      when: <condition>                  # e.g. user profile missing
+      exposed_as:
+        kind: business_exception
+        value: <BusinessExceptionName>
+    - id: <BusinessExceptionName>
+      when: <condition>
+      exposed_as:
+        kind: error_code
+        value: <ERROR_CODE>
+
+  # 8) 可观测性（可选，但很实用）
+  observability:
+    trace:
+      required: true
+      fields:
+        - traceId
+        - userId
+    metrics:
+      - name: <metricName>
+        type: counter                    # counter | gauge | histogram
+        desc: <what>
+    logs:
+      pii: prohibited                    # allowed | prohibited
+      redaction: required
+
+assumption:
+  # Assumption 只引用下游 Offer 的条款标识，不复制内容
+  dependsOn:
+    - offer: <PortOfferId>               # e.g. IdempotencyPort.offer
+      version: v1
+      clauses: [<ClauseId>, <ClauseId>]  # e.g. [I1, I3, I4]
+      purpose: >
+        <我依赖这些条款来保证什么语义>
+    - offer: <PortOfferId>
+      version: v1
+      clauses: [<ClauseId>]
+      purpose: >
+        <...>
+
+  # 对调用方的最低假设（可选，仅当不写会导致语义无法成立）
+  caller_assumptions:
+    - <assumption>                       # e.g. client retries may happen
+    - <assumption>
+
+policy:
+  # policy 只写实现决策：如何在不改变 offer 承诺的前提下落地
+  idempotency:
+    strategy: none                       # none | request-level | step-level
+    store: <IdempotencyPort>             # e.g. IdempotencyPort
+    ttl_seconds: 86400
+    notes: >
+      <幂等表/缓存/透传下游幂等等决策细节>
+
+  transaction:
+    boundary: single-db                  # single-db | multi-resource
+    notes: >
+      <事务边界、是否 outbox、是否 saga 等>
+
+  concurrency:
+    strategy: optimistic-lock            # optimistic-lock | pessimistic-lock | none
+    retry:
+      enabled: false
+      max_attempts: 0
+      backoff_ms: 0
+
+  error_mapping:
+    # 仅允许引用：port 技术异常类型 / failure semantic（来自 support classifier）
+    rules:
+      - from: <FailureSemantic>          # e.g. UNKNOWN_RESULT | RETRYABLE | NON_RETRYABLE
+        to: <BusinessExceptionOrResponse>
+        note: <why>
+
+  rollout:
+    compatibility: compatible            # compatible | breaking
+    migration_notes: >
+      <若 breaking，写清楚迁移策略>
+
+notes:
+  - <anything else>
