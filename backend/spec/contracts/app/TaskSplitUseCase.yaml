@@ -14,23 +14,7 @@ offer:
       type: TaskSplitRequestDTO
       required: true
       desc: 任务拆分请求
-      subfields:
-        - name: userId
-          type: string
-          required: true
-          desc: 用户ID
-        - name: idempotencyKey
-          type: string
-          required: true
-          desc: 幂等键
-        - name: taskText
-          type: string
-          required: true
-          desc: 任务文本，长度上限 1000 字符
-        - name: schemaId
-          type: string
-          required: true
-          desc: 任务schema ID，用于唯一标识任务schema，由config决定
+      ref: ./dto/taskSplitRequestDTO.yaml
 
   output:
     success:
@@ -61,10 +45,10 @@ offer:
       scope: user                     # e.g. user | tenant | global | (custom)
     semantics:
       duplicate_request: same-result     # same-result | same-effect | reject | return-in-progress
-      concurrent_request: return-in-progress
+      concurrent_request: same-result
     notes: >
       并发处理仅在 (userId + idempotencyKey) 维度定义：
-    - 并发相同 key：返回 in-progress 或相同结果
+    - 并发同key时，阻塞等待请求完成，返回相同结果；
     - 不对同一用户不同 key 的并发请求提供额外冲突语义承诺
 
   consistency:
@@ -74,14 +58,13 @@ offer:
       mode: sync                         # sync | accept-async
 
 
-  # 6) 重试语义（上层是否可安全重试）
   retry:
-    caller_may_retry: false
+    caller_may_retry: true
     safe_when:
-      - <condition>                      # e.g. failure_semantic == RETRYABLE
+      - same_idempotency_key                      
     notes: >
-      <何时允许重试、何时禁止重试>
-
+      契约使用相同 (userId + idempotencyKey) 重试是安全的；
+      具体的重试策略，不在契约范围内；
   # 7) 失败与异常（仅业务异常 / 对上层可见）
   #   注意：这里不出现 SDK 原始异常；下游技术异常应先在 adapter/support 归一化
   exceptions:

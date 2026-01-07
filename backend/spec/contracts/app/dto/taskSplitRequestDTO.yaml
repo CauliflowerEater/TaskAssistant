@@ -1,0 +1,24 @@
+type: dto
+id: TaskSplitRequestDTO
+version: v1
+summary: >
+  任务拆分请求参数
+
+fields:
+  - name: userId
+    type: string
+    required: true
+    desc: 用户ID
+  - name: idempotencyKey
+    type: string
+    required: true
+    desc: 幂等键
+  - name: taskText
+    type: string
+    required: true
+    desc: 任务文本，长度上限 1000 字符
+  - name: schemaId
+    type: string
+    required: true
+    desc: 任务schema ID，用于唯一标识任务schema，由config决定
+
