@@ -1,0 +1,16 @@
+type: enum
+id: FailureSemantic
+version: v1
+summary: >
+  失败语义分类，统一表达发生的失败类型，与技术异常解耦
+
+values:
+  - INVALID_INPUT
+  - CONFLICT
+  - NOT_FOUND
+  - RATE_LIMITED
+  - DEPENDENCY_FAILURE
+  - TIMEOUT
+  - UNKNOWN_RESULT
+  - INTERNAL_ERROR
+

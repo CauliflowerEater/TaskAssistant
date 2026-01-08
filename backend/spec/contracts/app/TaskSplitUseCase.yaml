@@ -6,7 +6,10 @@ status: draft                            # draft | active | deprecated
 since: "2026-01-05"                      # optional (ISO date)
 
 summary: >
-  接收用户自然语言任务描述 + schema(config)，调用 LLM 生成结构化 JSON，并对输出做格式校验，最后返回“已校验通过”的结构化结果；否则按失败语义返回；
+  接收用户自然语言任务描述 + schema(config)，
+  调用 LLM 生成结构化 JSON，
+  并对输出做格式校验，最后返回“已校验通过”的结构化结果；
+  否则按失败语义返回；
 
 offer:
   input:
@@ -19,12 +22,11 @@ offer:
   output:
     success:
       type: TaskSplitResultDTO                # e.g. TaskSplitResultDTO[]
-      desc: 任务拆分结果列表，每个元素为任务拆分结果的描述
-      subfields:
-        - name: taskSplitResults
-          type: string[]
-          required: true
-          desc: 任务拆分结果列表，每个元素为任务拆分结果,json格式;schema取决于schemaId
+      desc: >
+        任务拆分结果列表，每个元素为任务拆分结果的描述；
+        success仅在LLM输出通过schema校验且语义完整时返回；任意校验失败均视为failure；
+        结果结构由schema定义，usecase仅保证输出满足schema。
+      ref: ./dto/taskSplitResultDTO.yaml
     failure:
       model: TaskSplitException
       desc: 任务拆分失败
@@ -32,7 +34,9 @@ offer:
   effects:
     - name: call_llm                     # e.g. update-profile
       kind: third_party_sdk                    # write_db | call_http | publish_event | send_email | ...
-      desc: 调用LLM生成结构化JSON
+      desc: >
+        调用LLM生成结构化JSON；
+        可能发生超时，限流，不可达或返回非结构化结果。
     - name: write_idempotency_record
       kind: write_db
       desc: 写入幂等记录，用于防止重复请求
@@ -44,12 +48,13 @@ offer:
       name: idempotencyKey
       scope: user                     # e.g. user | tenant | global | (custom)
     semantics:
-      duplicate_request: same-result     # same-result | same-effect | reject | return-in-progress
-      concurrent_request: same-result
+      duplicate_request: wait-and-return-same-result     
+      concurrent_request: wait-and-return-same-result
     notes: >
-      并发处理仅在 (userId + idempotencyKey) 维度定义：
-    - 并发同key时，阻塞等待请求完成，返回相同结果；
-    - 不对同一用户不同 key 的并发请求提供额外冲突语义承诺
+      幂等语义仅在 (userId + idempotencyKey) 维度定义：
+      若未提供 userId，则幂等语义退化为（callerProvidedId + idempotencyKey），其中 callerProvidedId 由调用方在请求中稳定提供（例如通过请求头 X-User-Id），用于在未登录场景下形成幂等域；
+      并发同 key 时，阻塞等待首个请求完成，返回相同结果；
+      不对同一用户不同 key 的并发请求提供额外冲突语义承诺
 
   consistency:
     level: strong                        # strong | eventual | unknown
@@ -64,34 +69,47 @@ offer:
       - same_idempotency_key                      
     notes: >
       契约使用相同 (userId + idempotencyKey) 重试是安全的；
+      除上述条件外的重试行为，其结果不在本契约的保证范围内；
       具体的重试策略，不在契约范围内；
   # 7) 失败与异常（仅业务异常 / 对上层可见）
   #   注意：这里不出现 SDK 原始异常；下游技术异常应先在 adapter/support 归一化
   exceptions:
-    - id: <BusinessExceptionName>        # e.g. ProfileNotFound
-      when: <condition>                  # e.g. user profile missing
-      exposed_as:
-        kind: business_exception
-        value: <BusinessExceptionName>
-    - id: <BusinessExceptionName>
-      when: <condition>
-      exposed_as:
-        kind: error_code
-        value: <ERROR_CODE>
+    model: TaskSplitException
+    envelope:
+      model: FailureEnvelope
+      ref: ../common/FailureEnvelope.yaml
+    desc: >
+      对上层可见的失败统一使用 TaskSplitException 表达；
+      其对外字段协议遵循 FailureEnvelope（见 ref）。
+      具体“失败语义 -> 错误码/异常”的映射规则在 policy.error_mapping 中定义。
+      FailureEnvelope中的traceId必须与本次请求的traceId一致；
 
-  # 8) 可观测性（可选，但很实用）
   observability:
+    guarantee: >
+      无论成功或失败，只要进入usecase，均产生trace与metrics记录；
     trace:
       required: true
       fields:
         - traceId
         - userId
     metrics:
-      - name: <metricName>
-        type: counter                    # counter | gauge | histogram
-        desc: <what>
+      - name: task_split_requests_total
+        type: counter
+        scope: usecase
+        desc: >
+          TaskSplitUseCase 的请求总次数，每次进入 usecase 入口时递增一次，包含成功与失败请求。
+
+      - name: task_split_failures_total
+        type: counter
+        scope: usecase
+        dimensions:
+          - name: failureSemantic
+            type: FailureSemantic
+            ref: ../common/FailureSemantic.yaml
+        desc: >
+          TaskSplitUseCase 的失败请求次数，按 FailureSemantic 维度区分失败类型；仅当对上层返回失败结果时递增。
     logs:
-      pii: prohibited                    # allowed | prohibited
+      pii: prohibited
       redaction: required
 
 assumption:
@@ -110,8 +128,8 @@ assumption:
 
   # 对调用方的最低假设（可选，仅当不写会导致语义无法成立）
   caller_assumptions:
-    - <assumption>                       # e.g. client retries may happen
-    - <assumption>
+    - 调用方在同一幂等域内对相同业务操作使用相同的 idempotencyKey
+    - 当未提供 userId 时，调用方应在重试/并发请求中稳定提供 callerProvidedId（例如 X-User-Id），否则幂等语义无法成立
 
 policy:
   # policy 只写实现决策：如何在不改变 offer 承诺的前提下落地
