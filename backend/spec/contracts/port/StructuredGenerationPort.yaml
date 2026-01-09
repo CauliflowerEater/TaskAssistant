@@ -1,5 +1,5 @@
 type: port
-id: StructuredGenerationPort                            # e.g. ProfileRepoPort / IdempotencyPort
+id: StructuredGenerationPort                            
 version: v1
 owner: <shawn>                  
 status: draft                             # draft | active | deprecated
@@ -29,7 +29,7 @@ offer:
         成功时返回的结构化结果必须满足 schema 约束（字段/类型/必填项等）。
         返回形态必须稳定（例如稳定返回“已解析对象”或稳定返回“可解析 JSON 文本”之一）。
       guarantees:
-        - 成功输出可被上层直接消费，无需再次进行结构化校验
+        - 成功输出可被上层直接消费，无需再次进行schema/格式层面的结构化校验
       non_guarantees:
         - 不保证业务语义正确（例如字段值是否“合理”由上层策略决定）
 
@@ -58,6 +58,7 @@ offer:
             type: int
             constraints:
               min: 1
+              desc: attempts表示“已尝试调用下游的次数（至少一次）”；
         - failure.maxAttempts:
             type: int
             constraints:
@@ -137,7 +138,7 @@ offer:
     input_validation:
       minimal_defensive_checks: true
       notes: >
-        <port 层做“契约防御性校验”，不做业务语义校验>
+        port 对明显无效输入执行防御性校验，但不进行业务语义判定
     retry_semantics:
       caller_may_retry: true
       safe_when: []
