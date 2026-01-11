@@ -1,0 +1,433 @@
+type: port
+id: IdempotencyPort
+version: v1
+owner: infra
+status: draft
+since: "2026-01-04"
+
+summary: >
+  提供“幂等记录的占用（acquire）、并发同 key 的等待复用（wait-and-return-same-result）以及结果写回（complete）”能力；
+  幂等语义在 (scopeKey + idempotencyKey) 维度成立，结果可被后续重复/并发请求读取并返回同值。
+
+offer:
+  models:
+    IdempotencyPortFailure:
+      desc: 统一技术失败模型（单一异常类型）。字段结构为本文件内唯一权威定义，供各 operation 的 failure/output/exceptions 复用。
+      subfields:
+        reason:
+          type: enum
+          allowed:
+            - INVALID_INPUT
+            - STORAGE_UNAVAILABLE
+            - STORAGE_TIMEOUT
+            - DATA_CORRUPTION
+            - INTERNAL_ERROR
+          desc: 技术失败原因（禁止泄漏底层存储/SQL/SDK 原始异常）
+        certainty:
+          type: enum
+          allowed:
+            - CONFIRMED_NOT_EXECUTED
+            - UNKNOWN
+          desc: 结果确定性；UNKNOWN 用于表达副作用是否发生不可确认
+        traceId:
+          type: string
+          required: false
+          desc: 若调用上下文提供 traceId，则必须填充；否则可为空
+
+  clauses:
+    I1:
+      title: 幂等域与唯一性
+      desc: >
+        幂等语义在 (scopeKey + idempotencyKey) 维度成立；
+        (scopeKey, idempotencyKey) 必须具备唯一性约束，用于隔离不同调用方/用户的幂等域并避免结果串用。
+      guarantees:
+        - 同一幂等域内的重复请求可复用同一条幂等记录
+      non_guarantees:
+        - 不承诺 idempotencyKey 在全局唯一（仅在 scopeKey 内唯一）
+
+    I2:
+      title: 原子占用（Acquire）与状态机初始化
+      desc: >
+        当幂等记录不存在时，port 支持原子创建幂等记录并将其状态初始化为 IN_PROGRESS；
+        Acquire 的输出必须能区分“占用成功（获得执行权）”与“已存在记录（重复/并发请求）”。
+      guarantees:
+        - 记录不存在时，可原子创建并返回 ACQUIRED
+        - 记录存在时，返回已有记录的当前状态（IN_PROGRESS / SUCCESS / FAILED）
+      non_guarantees:
+        - 不保证调用方最终一定能 complete（调用方崩溃会导致 IN_PROGRESS 残留，见 I4/I6）
+
+    I3:
+      title: 结果复用（读取已完成记录）
+      desc: >
+        当幂等记录状态为 SUCCESS/FAILED 时，port 必须能返回该记录中持久化的结果负载（resultPayload），
+        以支持重复/并发请求返回同值（success 或 failure）。
+      guarantees:
+        - SUCCESS 返回 successResultPayload
+        - FAILED 返回 failureEnvelopePayload
+      non_guarantees:
+        - 不保证 resultPayload 的业务语义正确性（由上层保证）
+
+    I4:
+      title: 并发等待能力（Wait-for-completion）与等待超时
+      desc: >
+        当 acquire 返回 kind=IN_PROGRESS（命中进行中的幂等记录）时，
+        调用方可选择显式调用 wait_for_completion，
+        以在给定 waitTimeout 内等待该记录转为 SUCCESS/FAILED；
+        等待行为由调用方编排，port 仅提供等待与状态观测能力。
+        若在 waitTimeout 内未观测到完成，
+        wait_for_completion 必须返回 WAIT_TIMEOUT，
+        并将结果确定性标记为 UNKNOWN。
+      guarantees:
+        - wait_for_completion 在 waitTimeout 内观测到 SUCCESS/FAILED 时，返回同值结果
+        - wait_for_completion 超时返回 WAIT_TIMEOUT，且 certainty=UNKNOWN
+      non_guarantees:
+        - 不承诺 acquire 会自动触发等待；等待必须由调用方显式调用 wait_for_completion
+        - 不保证一定能在 waitTimeout 内完成（取决于上层执行耗时/下游依赖）
+
+    I5:
+      title: 结果写回（Complete）与状态迁移规则
+      desc: >
+        port 支持将幂等记录从 IN_PROGRESS 原子迁移至 SUCCESS/FAILED，并写入对应 resultPayload；
+        状态迁移必须满足单向性，禁止回退与覆盖已完成结果。
+      guarantees:
+        - 允许的迁移：IN_PROGRESS -> SUCCESS、IN_PROGRESS -> FAILED
+        - SUCCESS/FAILED 一旦写入，不得被后续 complete 覆盖（幂等写回：no-op 或返回已完成标识）
+      non_guarantees:
+        - 不承诺对“同 key 不同结果”的覆盖语义（默认禁止覆盖）
+
+    I6:
+      title: IN_PROGRESS 残留与过期语义（TTL）
+      desc: >
+        幂等记录应具备 TTL（expiresAt）。在记录未过期前，port 承诺对并发同 key 请求提供“同值返回”或“可等待返回”的幂等语义。
+        当记录过期后，port 不再保证可返回历史结果；
+        对于 IN_PROGRESS 记录，过期意味着可能存在“结果不可确认”的状态，上层需结合策略决定是否重试；port 禁止对既有记录（包含过期记录）执行“重置状态/重置 TTL/覆盖复用”等操作。若调用方需要重新触发一次新的业务执行意图，必须使用新的 idempotencyKey（在同一 scopeKey 下）。
+      guarantees:
+        - port 可提供 expiresAt 以供调用方判断过期窗口
+      non_guarantees:
+        - 不承诺自动抢占、自动补偿或自动清理策略（属于实现/运维策略）
+        - 不承诺也不允许将“已过期记录”视为不存在并在同一 (scopeKey, idempotencyKey) 上重新 ACQUIRE（禁止重置）；该策略应由调用方通过更换 idempotencyKey 显式表达新的执行意图
+        - 不承诺对“结果不可确认”提供自动恢复路径；调用方应自行决定提示用户重试、退避或更换 idempotencyKey 再发起
+
+    I7:
+      title: 可观测性最低承诺（本地关联）
+      desc: >
+        port 应支持获取 traceId 用于本地日志关联；可选择在幂等记录中持久化首个 ACQUIRED 请求的 traceId 以便排障。
+      guarantees:
+        - 失败模型中包含 traceId（若上下文提供）
+      non_guarantees:
+        - 不保证跨系统链路追踪能力（仅保证本系统内可关联）
+
+    I8:
+      title: 统一技术失败模型（单一异常类型）
+      desc: >
+        任意技术失败均以统一的技术失败模型 IdempotencyPortFailure 对上层暴露（单一异常类型或等价失败结果），
+        通过字段表达失败原因与结果确定性，禁止向上泄漏存储驱动/SQL/SDK 原始异常等实现细节。
+      guarantees:
+        - 任意技术失败均以 IdempotencyPortFailure 对上层暴露（单一异常类型或等价失败结果）
+        - IdempotencyPortFailure 的字段结构以 offer.models.IdempotencyPortFailure 为唯一权威定义
+        - 禁止向上泄漏存储驱动/SQL/SDK 原始异常等实现细节
+      non_guarantees:
+        - 不承诺 failure.reason 与业务 failureSemantic 的一一对应（由上层语义裁决）
+
+  operations:
+    - name: acquire
+      input:
+        - name: scopeKey
+          type: string
+          required: true
+          desc: 幂等域键（例如 userId 或 callerProvidedId）
+        - name: idempotencyKey
+          type: string
+          required: true
+          desc: 幂等键（在 scopeKey 维度内唯一）
+      output:
+        success:
+          type: AcquireResult
+          desc: >
+            幂等占用结果：可能为 ACQUIRED（获得执行权）/ CACHED_SUCCESS / CACHED_FAILURE / IN_PROGRESS；
+            对于已完成状态返回 resultPayload；对于 IN_PROGRESS 返回 expiresAt 等必要元信息。
+          subfields:
+            kind:
+              type: enum
+              allowed: [ACQUIRED, CACHED_SUCCESS, CACHED_FAILURE, IN_PROGRESS]
+              desc: 本次 acquire 的观测结果分支
+            status:
+              type: enum
+              allowed: [IN_PROGRESS, SUCCESS, FAILED]
+              desc: 幂等记录当前状态；当 kind=ACQUIRED 时通常为 IN_PROGRESS
+            resultPayload:
+              type: string
+              required: false
+              desc: 已完成记录的结果负载（SUCCESS 为成功结果；FAILED 为 FailureEnvelope 序列化结果）
+            expiresAt:
+              type: string
+              required: false
+              desc: 记录过期时间（仅当 kind=IN_PROGRESS 时需要提供）
+            traceId:
+              type: string
+              required: false
+              desc: 用于本地日志关联（若上下文可得则填充）
+            certainty:
+              type: enum
+              required: false
+              allowed: [CONFIRMED_NOT_EXECUTED, UNKNOWN]
+              desc: 结果确定性；acquire 本身通常为 CONFIRMED_NOT_EXECUTED
+        failure:
+          model: IdempotencyPortFailure
+      effects:
+        - kind: write_db
+          desc: 读写幂等记录表（原子插入或读取当前记录状态）
+      semantics:
+        idempotency:
+          supported: true
+          scope: (scopeKey + idempotencyKey)
+          notes: >
+            同一 (scopeKey, idempotencyKey) 的 acquire 可重复调用，语义稳定：返回同一条幂等记录的状态与结果。
+        consistency:
+          level: strong
+          notes: >
+            对同一幂等键的写入与读取需满足 read-your-writes，以兑现并发等待与同值返回语义。
+        concurrency:
+          conflict_detectable: true
+          exposed_as:
+            kind: success_field
+            value: output.success.subfields.kind
+          notes: >
+            并发同 key 是预期行为而非异常：并发竞争结果通过 AcquireResult.kind/status 显式暴露。
+            仅首个创建 IN_PROGRESS 的调用方获得执行权（kind=ACQUIRED）；其余调用方将观测到 kind=IN_PROGRESS 或 CACHED_* 并据此走等待/复用分支。
+            仅当 port 无法履约（例如存储不可用/超时/数据损坏）时，才通过 IdempotencyPortFailure 作为技术失败暴露。
+      exceptions:
+        - id: IdempotencyPortFailure
+          when: 存储不可用/超时/数据损坏/内部错误等导致 port 无法履约时
+          retryable: true
+
+    - name: wait_for_completion
+      input:
+        - name: scopeKey
+          type: string
+          required: true
+          desc: 幂等域键
+        - name: idempotencyKey
+          type: string
+          required: true
+          desc: 幂等键
+        - name: waitTimeoutMs
+          type: int
+          required: true
+          desc: 等待 IN_PROGRESS 变为 SUCCESS/FAILED 的最长时间（毫秒）
+      output:
+        success:
+          type: WaitResult
+          desc: >
+            等待结果：SUCCESS/FAILED 返回 resultPayload；超时返回 WAIT_TIMEOUT 且 certainty=UNKNOWN。
+          subfields:
+            kind:
+              type: enum
+              allowed: [COMPLETED_SUCCESS, COMPLETED_FAILURE, WAIT_TIMEOUT]
+              desc: 等待结果分支；WAIT_TIMEOUT 表示在 waitTimeout 内未观测到完成
+            status:
+              type: enum
+              allowed: [SUCCESS, FAILED, IN_PROGRESS]
+              desc: 幂等记录在返回时的状态；WAIT_TIMEOUT 时通常为 IN_PROGRESS
+            resultPayload:
+              type: string
+              required: false
+              desc: 已完成记录的结果负载（COMPLETED_* 时必须存在；WAIT_TIMEOUT 时不得要求存在）
+            certainty:
+              type: enum
+              allowed: [CONFIRMED_NOT_EXECUTED, UNKNOWN]
+              desc: WAIT_TIMEOUT 时必须为 UNKNOWN，用于表达结果不可确认
+            traceId:
+              type: string
+              required: false
+              desc: 用于本地日志关联（若上下文可得则填充）
+        failure:
+          model: IdempotencyPortFailure
+      effects:
+        - kind: read_db
+          desc: 轮询/通知等方式读取幂等记录状态直到完成或超时（实现细节不在本 port 契约中体现）
+      semantics:
+        idempotency:
+          supported: true
+          scope: (scopeKey + idempotencyKey)
+          notes: >
+            wait_for_completion 不改变记录内容，仅观察状态并在完成时返回已持久化结果。
+        consistency:
+          level: strong
+          notes: >
+            在 SUCCESS/FAILED 可见后必须可读到对应 resultPayload。
+        concurrency:
+          conflict_detectable: false
+          exposed_as:
+            kind: none
+            value: n/a
+          notes: >
+            wait_for_completion 仅观察，不进行占用或写入，因此不存在“并发冲突”语义。
+            WAIT_TIMEOUT 属于预期的成功返回分支，用于表达“结果不可确认”，而非 port 异常；
+            仅当 port 无法履约（例如存储不可用/超时/数据损坏）时，才通过 IdempotencyPortFailure 作为技术失败暴露。
+      exceptions:
+        - id: IdempotencyPortFailure
+          when: 存储不可用/超时/数据损坏/内部错误等导致无法读取或等待
+          retryable: true
+
+    - name: complete_success
+      input:
+        - name: scopeKey
+          type: string
+          required: true
+          desc: 幂等域键
+        - name: idempotencyKey
+          type: string
+          required: true
+          desc: 幂等键
+        - name: successResultPayload
+          type: string
+          required: true
+          desc: 成功结果序列化负载（JSON 等稳定格式）
+      output:
+        success:
+          type: CompleteResult
+          desc: >
+            写回结果：若从 IN_PROGRESS 成功迁移至 SUCCESS 则返回 UPDATED；
+            若已为 SUCCESS/FAILED 则返回 ALREADY_COMPLETED（不得覆盖）。
+          subfields:
+            kind:
+              type: enum
+              allowed: [UPDATED, ALREADY_COMPLETED]
+              desc: UPDATED 表示本次写回完成了状态迁移；ALREADY_COMPLETED 表示记录已完成且未被覆盖
+            status:
+              type: enum
+              allowed: [SUCCESS, FAILED]
+              desc: 写回后记录状态；complete_success 的 UPDATED 时必须为 SUCCESS
+            traceId:
+              type: string
+              required: false
+              desc: 用于本地日志关联（若上下文可得则填充）
+        failure:
+          model: IdempotencyPortFailure
+      effects:
+        - kind: write_db
+          desc: 原子更新幂等记录状态与结果负载（IN_PROGRESS -> SUCCESS）
+      semantics:
+        idempotency:
+          supported: true
+          scope: (scopeKey + idempotencyKey)
+          notes: >
+            complete_success 具备幂等性：对已完成记录不得覆盖，允许 no-op。
+        consistency:
+          level: strong
+          notes: >
+            完成写回后，后续 acquire/wait 必须能读到 SUCCESS 与 successResultPayload。
+        concurrency:
+          conflict_detectable: true
+          exposed_as:
+            kind: success_field
+            value: output.success.subfields.kind
+          notes: >
+            并发写回（同 key）是预期行为而非异常：并发竞争结果通过 CompleteResult.kind/status 显式暴露。
+            若本次写回完成了状态迁移则返回 kind=UPDATED；若记录已完成则返回 kind=ALREADY_COMPLETED（不得覆盖）。
+            仅当 port 无法履约（例如存储不可用/超时/数据损坏）时，才通过 IdempotencyPortFailure 作为技术失败暴露。
+      exceptions:
+        - id: IdempotencyPortFailure
+          when: 存储不可用/超时/数据损坏/内部错误等导致无法写回
+          retryable: true
+
+    - name: complete_failure
+      input:
+        - name: scopeKey
+          type: string
+          required: true
+          desc: 幂等域键
+        - name: idempotencyKey
+          type: string
+          required: true
+          desc: 幂等键
+        - name: failureEnvelopePayload
+          type: string
+          required: true
+          desc: 失败结果序列化负载（FailureEnvelope 的 JSON 等稳定格式）
+      output:
+        success:
+          type: CompleteResult
+          desc: >
+            写回失败：若从 IN_PROGRESS 成功迁移至 FAILED 则返回 UPDATED；
+            若已为 SUCCESS/FAILED 则返回 ALREADY_COMPLETED（不得覆盖）。
+          subfields:
+            kind:
+              type: enum
+              allowed: [UPDATED, ALREADY_COMPLETED]
+              desc: UPDATED 表示本次写回完成了状态迁移；ALREADY_COMPLETED 表示记录已完成且未被覆盖
+            status:
+              type: enum
+              allowed: [SUCCESS, FAILED]
+              desc: 写回后记录状态；complete_failure 的 UPDATED 时必须为 FAILED
+            traceId:
+              type: string
+              required: false
+              desc: 用于本地日志关联（若上下文可得则填充）
+        failure:
+          model: IdempotencyPortFailure
+      effects:
+        - kind: write_db
+          desc: 原子更新幂等记录状态与结果负载（IN_PROGRESS -> FAILED）
+      semantics:
+        idempotency:
+          supported: true
+          scope: (scopeKey + idempotencyKey)
+          notes: >
+            complete_failure 具备幂等性：对已完成记录不得覆盖，允许 no-op。
+        consistency:
+          level: strong
+          notes: >
+            完成写回后，后续 acquire/wait 必须能读到 FAILED 与 failureEnvelopePayload。
+        concurrency:
+          conflict_detectable: true
+          exposed_as:
+            kind: success_field
+            value: output.success.subfields.kind
+          notes: >
+            并发写回（同 key）是预期行为而非异常：并发竞争结果通过 CompleteResult.kind/status 显式暴露。
+            若本次写回完成了状态迁移则返回 kind=UPDATED；若记录已完成则返回 kind=ALREADY_COMPLETED（不得覆盖）。
+            仅当 port 无法履约（例如存储不可用/超时/数据损坏）时，才通过 IdempotencyPortFailure 作为技术失败暴露。
+      exceptions:
+        - id: IdempotencyPortFailure
+          when: 存储不可用/超时/数据损坏/内部错误等导致无法写回
+          retryable: true
+
+  constraints:
+    input_validation:
+      minimal_defensive_checks: true
+      notes: >
+        port 对明显无效输入执行防御性校验（例如空 scopeKey / 空 idempotencyKey），但不进行业务语义判定；
+        输入不合法时以 IdempotencyPortFailure.reason=INVALID_INPUT 暴露。
+    retry_semantics:
+      caller_may_retry: true
+      safe_when:
+        - 相同 (scopeKey, idempotencyKey) 的 acquire / wait_for_completion 可安全重试：仅返回同一条记录的观测结果（kind/status/resultPayload），不会产生新的业务副作用
+        - complete_success / complete_failure 可安全重试：写回为条件更新（仅允许 IN_PROGRESS -> SUCCESS/FAILED），对已完成记录不覆盖且返回 ALREADY_COMPLETED；
+          调用方重试时必须复用同一份写回 payload（successResultPayload / failureEnvelopePayload）以维持“同 key 返回同值”的语义
+      notes: >
+        本 port 不对上层“是否应该重试”做策略裁决；仅提供可识别的技术失败语义（reason/certainty/traceId）与可预期的并发分支（IN_PROGRESS/WAIT_TIMEOUT/ALREADY_COMPLETED）。
+        对 acquire/wait 的重试通常是安全的“重复读取/等待”；对 complete_* 的重试是安全的“重复写回”（不覆盖已完成结果）。
+        若上层决定重新触发一次新的业务执行意图（重新调用下游产生副作用），必须更换 idempotencyKey，而不是在同一 key 上重置或覆盖。
+    observability:
+      trace_required: true
+      metrics: []
+      logs:
+        pii: prohibited
+        redaction: required
+
+assumption:
+  caller_assumptions:
+    - 调用方在同一幂等域内对同一业务操作使用相同的 idempotencyKey
+    - scopeKey 在同一幂等域内稳定提供（例如 userId 或 callerProvidedId）；不稳定将导致幂等语义无法成立
+    - complete_* 仅应由获得执行权（ACQUIRED）的调用链在完成后调用，用于写回最终结果
+
+rollout:
+  compatibility: compatible
+  migration_notes: >
+    v1 初始版本，无迁移事项
+
+notes:
+  - 幂等状态机：IN_PROGRESS / SUCCESS / FAILED；等待超时（WAIT_TIMEOUT）属于可预期的返回分支，用于表达结果不可确认。
+  - WAIT_TIMEOUT 建议被上层语义裁决为 UNKNOWN_RESULT（或等价语义），并结合幂等域决定是否允许重试。
