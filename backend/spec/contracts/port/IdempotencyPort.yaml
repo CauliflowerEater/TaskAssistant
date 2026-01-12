@@ -148,7 +148,8 @@ offer:
             仅首个创建 IN_PROGRESS 的调用方获得执行权（kind=ACQUIRED）；其余调用方将观测到 kind=IN_PROGRESS 或 CACHED_* 并据此走等待/复用分支。
             仅当 port 无法履约（例如存储不可用/超时/数据损坏）时，才通过 IdempotencyPortFailure 作为技术失败暴露。
       exceptions:
-        - ref: ./errors/IdempotencyPortFailure.yaml
+        - type: IdempotencyPortFailure
+          ref: ./errors/IdempotencyPortFailure.yaml
           when: 存储不可用/超时/数据损坏/内部错误等导致 port 无法履约时
           retryable: true
 
@@ -173,6 +174,7 @@ offer:
           desc: >
             等待结果：SUCCESS/FAILED 返回 resultPayload；超时返回 WAIT_TIMEOUT 且 certainty=UNKNOWN。
         failure:
+          type: IdempotencyPortFailure
           ref: ./errors/IdempotencyPortFailure.yaml
       effects:
         - kind: read_db
@@ -197,7 +199,8 @@ offer:
             WAIT_TIMEOUT 属于预期的成功返回分支，用于表达“结果不可确认”，而非 port 异常；
             仅当 port 无法履约（例如存储不可用/超时/数据损坏）时，才通过 IdempotencyPortFailure 作为技术失败暴露。
       exceptions:
-        - ref: ./errors/IdempotencyPortFailure.yaml
+        - type: IdempotencyPortFailure
+          ref: ./errors/IdempotencyPortFailure.yaml
           when: 存储不可用/超时/数据损坏/内部错误等导致无法读取或等待
           retryable: true
 
@@ -223,6 +226,7 @@ offer:
             写回结果：若从 IN_PROGRESS 成功迁移至 SUCCESS 则返回 UPDATED；
             若已为 SUCCESS/FAILED 则返回 ALREADY_COMPLETED（不得覆盖）。
         failure:
+          type: IdempotencyPortFailure
           ref: ./errors/IdempotencyPortFailure.yaml
       effects:
         - kind: write_db
@@ -247,7 +251,8 @@ offer:
             若本次写回完成了状态迁移则返回 kind=UPDATED；若记录已完成则返回 kind=ALREADY_COMPLETED（不得覆盖）。
             仅当 port 无法履约（例如存储不可用/超时/数据损坏）时，才通过 IdempotencyPortFailure 作为技术失败暴露。
       exceptions:
-        - ref: ./errors/IdempotencyPortFailure.yaml
+        - type: IdempotencyPortFailure
+          ref: ./errors/IdempotencyPortFailure.yaml
           when: 存储不可用/超时/数据损坏/内部错误等导致无法写回
           retryable: true
 
@@ -273,6 +278,7 @@ offer:
             写回失败：若从 IN_PROGRESS 成功迁移至 FAILED 则返回 UPDATED；
             若已为 SUCCESS/FAILED 则返回 ALREADY_COMPLETED（不得覆盖）。
         failure:
+          type: IdempotencyPortFailure
           ref: ./errors/IdempotencyPortFailure.yaml
       effects:
         - kind: write_db
@@ -297,7 +303,8 @@ offer:
             若本次写回完成了状态迁移则返回 kind=UPDATED；若记录已完成则返回 kind=ALREADY_COMPLETED（不得覆盖）。
             仅当 port 无法履约（例如存储不可用/超时/数据损坏）时，才通过 IdempotencyPortFailure 作为技术失败暴露。
       exceptions:
-        - ref: ./errors/IdempotencyPortFailure.yaml
+        - type: IdempotencyPortFailure
+          ref: ./errors/IdempotencyPortFailure.yaml
           when: 存储不可用/超时/数据损坏/内部错误等导致无法写回
           retryable: true
 
