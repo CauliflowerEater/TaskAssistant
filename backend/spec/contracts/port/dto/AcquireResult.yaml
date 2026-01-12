@@ -1,0 +1,47 @@
+type: model
+id: AcquireResult
+version: v1
+summary: >
+  acquire 的占用结果模型：区分获得执行权、命中进行中记录或命中已完成记录并返回相应结果。
+
+fields:
+  - name: kind
+    type: enum
+    allowed:
+      - ACQUIRED
+      - CACHED_SUCCESS
+      - CACHED_FAILURE
+      - IN_PROGRESS
+    desc: 本次 acquire 的观测结果分支
+
+  - name: status
+    type: enum
+    allowed:
+      - IN_PROGRESS
+      - SUCCESS
+      - FAILED
+    desc: 幂等记录当前状态；当 kind=ACQUIRED 时通常为 IN_PROGRESS
+
+  - name: resultPayload
+    type: string
+    required: false
+    desc: 已完成记录的结果负载（SUCCESS 为成功结果；FAILED 为 FailureEnvelope 序列化结果）
+
+  - name: expiresAt
+    type: string
+    required: false
+    desc: 记录过期时间（仅当 kind=IN_PROGRESS 时需要提供）
+
+  - name: traceId
+    type: string
+    required: false
+    desc: 用于本地日志关联（若上下文可得则填充）
+
+  - name: certainty
+    type: enum
+    required: false
+    allowed:
+      - CONFIRMED_NOT_EXECUTED
+      - UNKNOWN
+    desc: 结果确定性；acquire 本身通常为 CONFIRMED_NOT_EXECUTED
+

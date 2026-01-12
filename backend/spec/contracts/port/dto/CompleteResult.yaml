@@ -1,0 +1,26 @@
+type: model
+id: CompleteResult
+version: v1
+summary: >
+  complete_success/complete_failure 的写回结果模型：区分是否完成了状态迁移或记录已完成的幂等写回分支。
+
+fields:
+  - name: kind
+    type: enum
+    allowed:
+      - UPDATED
+      - ALREADY_COMPLETED
+    desc: UPDATED 表示本次写回完成了状态迁移；ALREADY_COMPLETED 表示记录已完成且未被覆盖
+
+  - name: status
+    type: enum
+    allowed:
+      - SUCCESS
+      - FAILED
+    desc: 写回后记录状态；complete_success 的 UPDATED 时必须为 SUCCESS；complete_failure 的 UPDATED 时必须为 FAILED
+
+  - name: traceId
+    type: string
+    required: false
+    desc: 用于本地日志关联（若上下文可得则填充）
+

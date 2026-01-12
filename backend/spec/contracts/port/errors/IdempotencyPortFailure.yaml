@@ -1,0 +1,29 @@
+type: model
+id: IdempotencyPortFailure
+version: v1
+summary: >
+  统一技术失败模型（单一异常类型），供各 port operation 的 failure/output/exceptions 复用。
+
+fields:
+  - name: reason
+    type: enum
+    allowed:
+      - INVALID_INPUT
+      - STORAGE_UNAVAILABLE
+      - STORAGE_TIMEOUT
+      - DATA_CORRUPTION
+      - INTERNAL_ERROR
+    desc: 技术失败原因（禁止泄漏底层存储/SQL/SDK 原始异常）
+
+  - name: certainty
+    type: enum
+    allowed:
+      - CONFIRMED_NOT_EXECUTED
+      - UNKNOWN
+    desc: 结果确定性；UNKNOWN 用于表达副作用是否发生不可确认
+
+  - name: traceId
+    type: string
+    required: false
+    desc: 若调用上下文提供 traceId，则必须填充；否则可为空
+

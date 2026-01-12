@@ -10,30 +10,6 @@ summary: >
   幂等语义在 (scopeKey + idempotencyKey) 维度成立，结果可被后续重复/并发请求读取并返回同值。
 
 offer:
-  models:
-    IdempotencyPortFailure:
-      desc: 统一技术失败模型（单一异常类型）。字段结构为本文件内唯一权威定义，供各 operation 的 failure/output/exceptions 复用。
-      subfields:
-        reason:
-          type: enum
-          allowed:
-            - INVALID_INPUT
-            - STORAGE_UNAVAILABLE
-            - STORAGE_TIMEOUT
-            - DATA_CORRUPTION
-            - INTERNAL_ERROR
-          desc: 技术失败原因（禁止泄漏底层存储/SQL/SDK 原始异常）
-        certainty:
-          type: enum
-          allowed:
-            - CONFIRMED_NOT_EXECUTED
-            - UNKNOWN
-          desc: 结果确定性；UNKNOWN 用于表达副作用是否发生不可确认
-        traceId:
-          type: string
-          required: false
-          desc: 若调用上下文提供 traceId，则必须填充；否则可为空
-
   clauses:
     I1:
       title: 幂等域与唯一性
@@ -124,7 +100,7 @@ offer:
         通过字段表达失败原因与结果确定性，禁止向上泄漏存储驱动/SQL/SDK 原始异常等实现细节。
       guarantees:
         - 任意技术失败均以 IdempotencyPortFailure 对上层暴露（单一异常类型或等价失败结果）
-        - IdempotencyPortFailure 的字段结构以 offer.models.IdempotencyPortFailure 为唯一权威定义
+        - IdempotencyPortFailure 的字段结构以 ./errors/IdempotencyPortFailure.yaml 为唯一权威定义
         - 禁止向上泄漏存储驱动/SQL/SDK 原始异常等实现细节
       non_guarantees:
         - 不承诺 failure.reason 与业务 failureSemantic 的一一对应（由上层语义裁决）
@@ -143,37 +119,12 @@ offer:
       output:
         success:
           type: AcquireResult
+          ref: ./dto/AcquireResult.yaml
           desc: >
             幂等占用结果：可能为 ACQUIRED（获得执行权）/ CACHED_SUCCESS / CACHED_FAILURE / IN_PROGRESS；
             对于已完成状态返回 resultPayload；对于 IN_PROGRESS 返回 expiresAt 等必要元信息。
-          subfields:
-            kind:
-              type: enum
-              allowed: [ACQUIRED, CACHED_SUCCESS, CACHED_FAILURE, IN_PROGRESS]
-              desc: 本次 acquire 的观测结果分支
-            status:
-              type: enum
-              allowed: [IN_PROGRESS, SUCCESS, FAILED]
-              desc: 幂等记录当前状态；当 kind=ACQUIRED 时通常为 IN_PROGRESS
-            resultPayload:
-              type: string
-              required: false
-              desc: 已完成记录的结果负载（SUCCESS 为成功结果；FAILED 为 FailureEnvelope 序列化结果）
-            expiresAt:
-              type: string
-              required: false
-              desc: 记录过期时间（仅当 kind=IN_PROGRESS 时需要提供）
-            traceId:
-              type: string
-              required: false
-              desc: 用于本地日志关联（若上下文可得则填充）
-            certainty:
-              type: enum
-              required: false
-              allowed: [CONFIRMED_NOT_EXECUTED, UNKNOWN]
-              desc: 结果确定性；acquire 本身通常为 CONFIRMED_NOT_EXECUTED
         failure:
-          model: IdempotencyPortFailure
+          ref: ./errors/IdempotencyPortFailure.yaml
       effects:
         - kind: write_db
           desc: 读写幂等记录表（原子插入或读取当前记录状态）
@@ -191,13 +142,13 @@ offer:
           conflict_detectable: true
           exposed_as:
             kind: success_field
-            value: output.success.subfields.kind
+            value: ./dto/AcquireResult.yaml#kind
           notes: >
             并发同 key 是预期行为而非异常：并发竞争结果通过 AcquireResult.kind/status 显式暴露。
             仅首个创建 IN_PROGRESS 的调用方获得执行权（kind=ACQUIRED）；其余调用方将观测到 kind=IN_PROGRESS 或 CACHED_* 并据此走等待/复用分支。
             仅当 port 无法履约（例如存储不可用/超时/数据损坏）时，才通过 IdempotencyPortFailure 作为技术失败暴露。
       exceptions:
-        - id: IdempotencyPortFailure
+        - ref: ./errors/IdempotencyPortFailure.yaml
           when: 存储不可用/超时/数据损坏/内部错误等导致 port 无法履约时
           retryable: true
 
@@ -218,31 +169,11 @@ offer:
       output:
         success:
           type: WaitResult
+          ref: ./dto/WaitResult.yaml
           desc: >
             等待结果：SUCCESS/FAILED 返回 resultPayload；超时返回 WAIT_TIMEOUT 且 certainty=UNKNOWN。
-          subfields:
-            kind:
-              type: enum
-              allowed: [COMPLETED_SUCCESS, COMPLETED_FAILURE, WAIT_TIMEOUT]
-              desc: 等待结果分支；WAIT_TIMEOUT 表示在 waitTimeout 内未观测到完成
-            status:
-              type: enum
-              allowed: [SUCCESS, FAILED, IN_PROGRESS]
-              desc: 幂等记录在返回时的状态；WAIT_TIMEOUT 时通常为 IN_PROGRESS
-            resultPayload:
-              type: string
-              required: false
-              desc: 已完成记录的结果负载（COMPLETED_* 时必须存在；WAIT_TIMEOUT 时不得要求存在）
-            certainty:
-              type: enum
-              allowed: [CONFIRMED_NOT_EXECUTED, UNKNOWN]
-              desc: WAIT_TIMEOUT 时必须为 UNKNOWN，用于表达结果不可确认
-            traceId:
-              type: string
-              required: false
-              desc: 用于本地日志关联（若上下文可得则填充）
         failure:
-          model: IdempotencyPortFailure
+          ref: ./errors/IdempotencyPortFailure.yaml
       effects:
         - kind: read_db
           desc: 轮询/通知等方式读取幂等记录状态直到完成或超时（实现细节不在本 port 契约中体现）
@@ -266,7 +197,7 @@ offer:
             WAIT_TIMEOUT 属于预期的成功返回分支，用于表达“结果不可确认”，而非 port 异常；
             仅当 port 无法履约（例如存储不可用/超时/数据损坏）时，才通过 IdempotencyPortFailure 作为技术失败暴露。
       exceptions:
-        - id: IdempotencyPortFailure
+        - ref: ./errors/IdempotencyPortFailure.yaml
           when: 存储不可用/超时/数据损坏/内部错误等导致无法读取或等待
           retryable: true
 
@@ -287,24 +218,12 @@ offer:
       output:
         success:
           type: CompleteResult
+          ref: ./dto/CompleteResult.yaml
           desc: >
             写回结果：若从 IN_PROGRESS 成功迁移至 SUCCESS 则返回 UPDATED；
             若已为 SUCCESS/FAILED 则返回 ALREADY_COMPLETED（不得覆盖）。
-          subfields:
-            kind:
-              type: enum
-              allowed: [UPDATED, ALREADY_COMPLETED]
-              desc: UPDATED 表示本次写回完成了状态迁移；ALREADY_COMPLETED 表示记录已完成且未被覆盖
-            status:
-              type: enum
-              allowed: [SUCCESS, FAILED]
-              desc: 写回后记录状态；complete_success 的 UPDATED 时必须为 SUCCESS
-            traceId:
-              type: string
-              required: false
-              desc: 用于本地日志关联（若上下文可得则填充）
         failure:
-          model: IdempotencyPortFailure
+          ref: ./errors/IdempotencyPortFailure.yaml
       effects:
         - kind: write_db
           desc: 原子更新幂等记录状态与结果负载（IN_PROGRESS -> SUCCESS）
@@ -322,13 +241,13 @@ offer:
           conflict_detectable: true
           exposed_as:
             kind: success_field
-            value: output.success.subfields.kind
+            value: ./dto/CompleteResult.yaml#kind
           notes: >
             并发写回（同 key）是预期行为而非异常：并发竞争结果通过 CompleteResult.kind/status 显式暴露。
             若本次写回完成了状态迁移则返回 kind=UPDATED；若记录已完成则返回 kind=ALREADY_COMPLETED（不得覆盖）。
             仅当 port 无法履约（例如存储不可用/超时/数据损坏）时，才通过 IdempotencyPortFailure 作为技术失败暴露。
       exceptions:
-        - id: IdempotencyPortFailure
+        - ref: ./errors/IdempotencyPortFailure.yaml
           when: 存储不可用/超时/数据损坏/内部错误等导致无法写回
           retryable: true
 
@@ -349,24 +268,12 @@ offer:
       output:
         success:
           type: CompleteResult
+          ref: ./dto/CompleteResult.yaml
           desc: >
             写回失败：若从 IN_PROGRESS 成功迁移至 FAILED 则返回 UPDATED；
             若已为 SUCCESS/FAILED 则返回 ALREADY_COMPLETED（不得覆盖）。
-          subfields:
-            kind:
-              type: enum
-              allowed: [UPDATED, ALREADY_COMPLETED]
-              desc: UPDATED 表示本次写回完成了状态迁移；ALREADY_COMPLETED 表示记录已完成且未被覆盖
-            status:
-              type: enum
-              allowed: [SUCCESS, FAILED]
-              desc: 写回后记录状态；complete_failure 的 UPDATED 时必须为 FAILED
-            traceId:
-              type: string
-              required: false
-              desc: 用于本地日志关联（若上下文可得则填充）
         failure:
-          model: IdempotencyPortFailure
+          ref: ./errors/IdempotencyPortFailure.yaml
       effects:
         - kind: write_db
           desc: 原子更新幂等记录状态与结果负载（IN_PROGRESS -> FAILED）
@@ -384,13 +291,13 @@ offer:
           conflict_detectable: true
           exposed_as:
             kind: success_field
-            value: output.success.subfields.kind
+            value: ./dto/CompleteResult.yaml#kind
           notes: >
             并发写回（同 key）是预期行为而非异常：并发竞争结果通过 CompleteResult.kind/status 显式暴露。
             若本次写回完成了状态迁移则返回 kind=UPDATED；若记录已完成则返回 kind=ALREADY_COMPLETED（不得覆盖）。
             仅当 port 无法履约（例如存储不可用/超时/数据损坏）时，才通过 IdempotencyPortFailure 作为技术失败暴露。
       exceptions:
-        - id: IdempotencyPortFailure
+        - ref: ./errors/IdempotencyPortFailure.yaml
           when: 存储不可用/超时/数据损坏/内部错误等导致无法写回
           retryable: true
 
