@@ -3,7 +3,7 @@ id: IdempotencyPort
 version: v1
 owner: infra
 status: draft
-since: "2026-01-04"
+since: "2026-01-08"
 
 summary: >
   提供“幂等记录的占用（acquire）、并发同 key 的等待复用（wait-and-return-same-result）以及结果写回（complete）”能力；
