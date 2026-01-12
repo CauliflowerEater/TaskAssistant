@@ -1,0 +1,43 @@
+type: model
+id: StructuredGenerationPortFailure
+version: v1
+summary: >
+  统一技术失败模型（单一异常类型），供 StructuredGenerationPort 的 failure/output/exceptions 复用。
+
+fields:
+  - name: reason
+    type: enum
+    allowed:
+      - INVALID_INPUT
+      - SCHEMA_NOT_FOUND
+      - STRUCTURED_OUTPUT_VIOLATION
+      - TIMEOUT
+      - RATE_LIMITED
+      - DEPENDENCY_FAILURE
+      - INTERNAL_SDK_ERROR
+    desc: 技术失败原因（禁止向上泄漏 SDK/HTTP 状态码等实现细节）
+
+  - name: certainty
+    type: enum
+    allowed:
+      - CONFIRMED_NOT_EXECUTED
+      - UNKNOWN
+    desc: 结果确定性；UNKNOWN 用于表达副作用是否发生不可确认
+
+  - name: attempts
+    type: int
+    constraints:
+      min: 1
+    desc: attempts 表示已尝试调用下游的次数（至少一次）
+
+  - name: maxAttempts
+    type: int
+    constraints:
+      min: 1
+    desc: 单次调用内允许的最大尝试次数（含最终失败时的最后一次）
+
+  - name: traceId
+    type: string
+    required: false
+    desc: 若调用上下文提供 traceId，则必须填充；否则可为空
+

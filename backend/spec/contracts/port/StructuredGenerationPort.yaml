@@ -36,37 +36,12 @@ offer:
     P3:
       title: 统一技术失败模型（单一异常类型）
       desc: >
-        任意失败均以统一的技术失败模型 PortTechnicalFailure 对上层暴露（单一异常类型或等价失败结果），
+        任意失败均以统一的技术失败模型 StructuredGenerationPortFailure 对上层暴露（单一异常类型或等价失败结果），
         通过字段表达失败原因与可确认性，禁止向上泄漏 SDK 原始异常/HTTP 状态码等实现细节。
       guarantees:
-        - failure.reason:
-            type: enum
-            allowed:
-              - INVALID_INPUT
-              - SCHEMA_NOT_FOUND
-              - STRUCTURED_OUTPUT_VIOLATION
-              - TIMEOUT
-              - RATE_LIMITED
-              - DEPENDENCY_FAILURE
-              - INTERNAL_SDK_ERROR
-        - failure.certainty:
-            type: enum
-            allowed:
-              - CONFIRMED_NOT_EXECUTED
-              - UNKNOWN
-        - failure.attempts:
-            type: int
-            constraints:
-              min: 1
-              desc: attempts表示“已尝试调用下游的次数（至少一次）”；
-        - failure.maxAttempts:
-            type: int
-            constraints:
-              min: 1
-        - failure.traceId:
-            type: string
-            required: false
-            desc: 若调用上下文提供 traceId，则必须填充；否则可为空
+        - 任意技术失败均以 StructuredGenerationPortFailure 对上层暴露（单一异常类型或等价失败结果）
+        - StructuredGenerationPortFailure 的字段结构以 ./errors/StructuredGenerationPortFailure.yaml 为唯一权威定义
+        - 禁止向上泄漏 SDK/HTTP 状态码等实现细节
       non_guarantees:
         - 不承诺 failure.reason 与业务 failureSemantic 的一一对应（由上层语义裁决）
 
@@ -79,7 +54,7 @@ offer:
         - 当 reason=STRUCTURED_OUTPUT_VIOLATION 时，可在单次调用内最多重试 maxAttempts 次（默认建议 3）
         - 对外暴露的 failure.attempts / failure.maxAttempts 反映已尝试次数
       non_guarantees:
-        - 不保证内部重试一定成功；若最终失败，将以 PortTechnicalFailure 暴露最终失败原因
+        - 不保证内部重试一定成功；若最终失败，将以 StructuredGenerationPortFailure 暴露最终失败原因
 
     P5:
       title: 可观测性最低承诺（本地关联）
@@ -108,7 +83,8 @@ offer:
           type: StructuredOutput
           desc: 满足 schema 的结构化结果（返回形态稳定：对象或可解析 JSON 文本之一）
         failure:
-          model: PortTechnicalFailure
+          type: StructuredGenerationPortFailure
+          ref: ./errors/StructuredGenerationPortFailure.yaml
       effects:
         - kind: call_llm
           desc: 调用外部模型服务完成结构化生成
@@ -125,11 +101,12 @@ offer:
           conflict_detectable: false
           exposed_as:
             kind: technical_exception
-            value: PortTechnicalFailure
+            value: StructuredGenerationPortFailure
           notes: >
             并发请求的冲突语义不在本 port 承诺范围内；如需并发去重或互斥由上层/其他 port 实现。
       exceptions:
-        - id: PortTechnicalFailure
+        - id: StructuredGenerationPortFailure
+          ref: ./errors/StructuredGenerationPortFailure.yaml
           when: 调用失败或结构化校验失败时（见 failure.reason 与 failure.certainty 字段）
           retryable: false
 
@@ -157,7 +134,7 @@ assumption:
   # 若存在，仅限于对调用方行为的最低假设（例如必须提供 key）
   caller_assumptions:
     - 调用方提供可用的 schemaKey（能在系统配置中定位到 schema）
-    - rawText 为非空文本；若为空或仅空白，port 可直接返回输入校验失败（作为 PortTechnicalFailure.reason=INVALID_INPUT）
+    - rawText 为非空文本；若为空或仅空白，port 可直接返回输入校验失败（作为 StructuredGenerationPortFailure.reason=INVALID_INPUT）
 
 # NOTE:
 # Port 层不包含 Implementation Policy。

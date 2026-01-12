@@ -1,7 +1,7 @@
 type: usecase
-id: TaskSplitUseCase                       # e.g. UpdateProfile
+id: TaskSplitUseCase                       
 version: v1
-owner: <shawn>                  # optional
+owner: <shawn>                  
 status: draft                            # draft | active | deprecated
 since: "2026-01-05"                      # optional (ISO date)
 
@@ -36,7 +36,7 @@ offer:
       kind: third_party_sdk                    # write_db | call_http | publish_event | send_email | ...
       desc: >
         调用LLM生成结构化JSON；
-        可能发生超时，限流，不可达或返回非结构化结果。
+        可能发生超时，限流，不可达。
     - name: write_idempotency_record
       kind: write_db
       desc: 写入幂等记录，用于防止重复请求
@@ -55,6 +55,7 @@ offer:
       若未提供 userId，则幂等语义退化为（callerProvidedId + idempotencyKey），其中 callerProvidedId 由调用方在请求中稳定提供（例如通过请求头 X-User-Id），用于在未登录场景下形成幂等域；
       并发同 key 时，阻塞等待首个请求完成，返回相同结果；
       不对同一用户不同 key 的并发请求提供额外冲突语义承诺
+      对同一 (userId/callerProvidedId + idempotencyKey) 不提供“重置/覆盖以重新执行”的语义；若需重新触发新的执行意图，调用方必须更换 idempotencyKey。
 
   consistency:
     level: strong                        # strong | eventual | unknown
@@ -115,16 +116,36 @@ offer:
 assumption:
   # Assumption 只引用下游 Offer 的条款标识，不复制内容
   dependsOn:
-    - offer: <PortOfferId>               # e.g. IdempotencyPort.offer
+    - offer: IdempotencyPort.offer
       version: v1
-      clauses: [<ClauseId>, <ClauseId>]  # e.g. [I1, I3, I4]
+      clauses: [I1, I2, I3, I4, I5, I6, I7, I8]
       purpose: >
-        <我依赖这些条款来保证什么语义>
-    - offer: <PortOfferId>
+        TaskSplitUseCase 依赖 IdempotencyPort 在同一幂等域内提供
+        “一次执行、多次复用”的稳定幂等语义，以支撑任务拆分流程的安全编排：
+        - 通过原子占用区分首次执行与重复/并发请求（I2），确保同一业务意图仅被执行一次；
+        - 对已完成记录返回同值结果（I3, I5），避免重复调用 LLM 产生多次副作用；
+        - 在执行进行中支持显式等待与结果不可确认表达（I4, I6），
+          使并发请求能够等待或在超时后由 usecase 决定重试策略；
+        - 禁止对已存在或已过期记录进行状态重置或覆盖（I5, I6），
+          以确保幂等语义在 usecase 生命周期内不可被破坏；
+        - 通过统一的技术失败模型暴露不可履约情况（I8），
+          并携带 traceId 以支持 usecase 级别的失败关联与排障（I7）。
+    - offer: StructuredGenerationPort.offer
       version: v1
-      clauses: [<ClauseId>]
+      clauses: [P1, P2, P3, P4, P5]
       purpose: >
-        <...>
+        TaskSplitUseCase 依赖 StructuredGenerationPort 提供“可配置 schema 约束下的稳定结构化生成能力”，
+        以支撑对 LLM 输出进行可验证、可复用的编排处理：
+        - usecase 仅通过 schemaKey 选择结构约束，而不直接传递 schema 定义（P1），
+          以确保 schema 的来源、版本与可用性由系统统一管理；
+        - 成功返回的结果必须已满足 schema 约束（P2），
+          使 usecase 能够在成功分支中直接消费结构化结果而无需重复做格式/结构校验；
+        - 任意技术失败以统一的失败模型暴露（P3），
+          使 usecase 能够在不感知 SDK/HTTP 等实现细节的前提下进行失败语义映射与决策；
+        - port 仅在“已返回但未通过结构化校验”的场景下进行有限次内部重试（P4），
+          以避免 usecase 在编排层面处理 LLM 格式抖动，同时不掩盖超时、依赖失败等不可重试问题；
+        - port 在失败模型中提供 traceId 用于本地关联（P5），
+          以支持 usecase 在跨 port 编排失败时进行日志与排障关联。
 
   # 对调用方的最低假设（可选，仅当不写会导致语义无法成立）
   caller_assumptions:
