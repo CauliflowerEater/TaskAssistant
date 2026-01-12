@@ -100,10 +100,11 @@ offer:
         concurrency:
           conflict_detectable: false
           exposed_as:
-            kind: technical_exception
-            value: StructuredGenerationPortFailure
+            kind: none
+            value: n/a
           notes: >
-            并发请求的冲突语义不在本 port 承诺范围内；如需并发去重或互斥由上层/其他 port 实现。
+            本 port 不承诺也不暴露“并发冲突”的可检测语义：并发调用被视为独立请求。
+            若上层需要并发去重/互斥/同 key 等待复用，应通过幂等/互斥类 port 在上层编排实现。
       exceptions:
         - id: StructuredGenerationPortFailure
           ref: ./errors/StructuredGenerationPortFailure.yaml
