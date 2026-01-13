@@ -88,6 +88,17 @@ When designing or generating any method, the following decision rules MUST be ap
 - Prefer explicit state transitions over implicit success assumptions.
 - Avoid introducing compensation or idempotency unless replay is possible or expected.
 
+#### Concurrency Control (UseCase Layer)
+
+- The UseCase layer MUST NOT implement any form of concurrency control or locking semantics.
+- The UseCase layer MUST NOT introduce:
+  - In-process synchronization primitives (e.g. synchronized, Lock, Semaphore, Mutex)
+  - Database-level explicit locks or long-running transactional locks (e.g. SELECT ... FOR UPDATE)
+  - Distributed locks, spin locks, busy-waiting, or in-memory structures for mutual exclusion or deduplication
+- The UseCase layer MUST NOT implement concurrency control via version checks, CAS operations, or self-managed state tables.
+- All concurrency, mutual exclusion, deduplication, and wait-for-completion semantics MUST be provided by downstream components (port / infra layers) and expressed through their contracts.
+- The responsibility of the UseCase layer is strictly limited to workflow orchestration and branching based on downstream results.
+- The UseCase layer MUST NOT assume, infer, or depend on the internal concurrency mechanisms of downstream components.
 ---
 
 ## 4. Naming Rules (Strict)
