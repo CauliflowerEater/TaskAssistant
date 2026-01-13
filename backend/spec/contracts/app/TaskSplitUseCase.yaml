@@ -153,25 +153,57 @@ assumption:
     - 当未提供 userId 时，调用方应在重试/并发请求中稳定提供 callerProvidedId（例如 X-User-Id），否则幂等语义无法成立
 
 policy:
-  # policy 只写实现决策：如何在不改变 offer 承诺的前提下落地
   idempotency:
-    strategy: none                       # none | request-level | step-level
-    store: <IdempotencyPort>             # e.g. IdempotencyPort
-    ttl_seconds: 86400
-    notes: >
-      <幂等表/缓存/透传下游幂等等决策细节>
+    strategy: request-level              # none | request-level | step-level
+    store: IdempotencyPort               # single source of truth for idempotency state/result
+
+    params:
+      wait_timeout_seconds:
+        semantic_default: 10
+        configurable: true
+        affects:
+          - concurrent_request_waiting
+          - result_certainty
+        notes: >
+          并发/重复请求在命中 IN_PROGRESS 状态时的最大等待时间。
+          该值来自外部配置（契约仅给出语义默认值）；调参会影响 WAIT_TIMEOUT 的触发概率与 UNKNOWN 语义暴露频率。
+      record_ttl_seconds:
+        semantic_default: 86400
+        configurable: true
+        affects:
+          - same_result_reuse_window
+          - storage_retention
+        notes: >
+          已完成记录（SUCCESS/FAILED）的结果保留窗口。
+          该值来自外部配置（契约仅给出语义默认值）；调参会影响可复用窗口与存储成本。
+
+    implementation_guards:
+      reset_policy: forbidden              # forbid reset/overwrite/reacquire on same (scopeKey, idempotencyKey)
+      expiry_policy: no_reacquire_same_key # forbid treating expired record as absent and re-ACQUIRE on same key
+      notes: >
+        作为实现禁令：不得对既有记录（包含过期记录）执行“重置状态 / 重置 TTL / 覆盖结果 / 同 key 重新 ACQUIRE”等策略；
+        若需要重新触发新的业务执行意图，调用方必须更换 idempotencyKey（该对外约束已在 offer.idempotency.notes 中声明）。
 
   transaction:
-    boundary: single-db                  # single-db | multi-resource
+    boundary: none_at_usecase            # none_at_usecase | single-db | multi-resource
     notes: >
-      <事务边界、是否 outbox、是否 saga 等>
+      本 usecase 不声明跨步骤/跨资源的事务边界：不得将 LLM 调用与幂等记录写入放入同一长事务中（会造成锁持有与超时放大）。
+      原子性/一致性要求下沉至 IdempotencyPort 的单次存储操作中，并以其 offer 条款为准（参见 assumption: IdempotencyPort.offer[I2,I5,I8]）。
+      usecase 仅依赖该 port 的原子语义进行编排；若未来引入消息发布等额外副作用，再评估 outbox/saga（属于新需求）。
 
-  concurrency:
-    strategy: optimistic-lock            # optimistic-lock | pessimistic-lock | none
-    retry:
-      enabled: false
-      max_attempts: 0
-      backoff_ms: 0
+  workflow:
+      acquire:
+        COMPLETED   -> return completed
+        IN_PROGRESS -> wait
+        ACQUIRED    -> execute
+
+      wait:
+        TIMEOUT -> FAIL(RESULT_UNKNOWN)
+        DONE    -> return completed
+
+      execute:
+        SUCCESS -> persist_and_return
+        FAILURE -> persist_and_return
 
   error_mapping:
     # 仅允许引用：port 技术异常类型 / failure semantic（来自 support classifier）
