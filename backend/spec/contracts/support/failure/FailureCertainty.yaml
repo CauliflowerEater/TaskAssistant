@@ -1,0 +1,10 @@
+type: enum
+id: FailureCertainty
+version: v1
+summary: >
+  结果确定性，用于表达副作用是否发生不可确认
+
+values:
+  - CONFIRMED_NOT_EXECUTED
+  - UNKNOWN
+

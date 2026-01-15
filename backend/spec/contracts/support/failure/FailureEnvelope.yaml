@@ -5,12 +5,7 @@ summary: >
   失败响应体，FailureEnvelope 是系统级失败协议，任何 usecase 的异常对外暴露必须映射为 FailureEnvelope，不得直接泄漏实现异常。
 
 fields:
-  - name: errorCode
-    type: string
-    required: true
-    desc: 稳定错误码，用于程序判断与跨系统对齐
-
-  - name: errorMessage
+  - name: usecaseSemantic
     type: string
     required: true
     desc: 面向开发者或用户的错误描述文本
@@ -22,19 +17,13 @@ fields:
     desc: >
       失败的语义分类，用于统一表达“发生了什么类型的失败”，
       与具体技术异常或错误码解耦
-
-  - name: retryable
-    type: boolean
-    required: true
-    desc: >
-      是否允许在相同幂等键/业务条件下进行重试；
-      true 表示重试可能成功，false 表示重试无意义
-
-  - name: retryAfterMs
-    type: int
+  
+  - name: certainty
+    type: FailureCertainty
     required: false
+    ref: ./FailureCertainty.yaml
     desc: >
-      建议的重试等待时间（毫秒），通常用于限流或下游过载场景
+      结果确定性，用于表达副作用是否发生不可确认
 
   - name: traceId
     type: string

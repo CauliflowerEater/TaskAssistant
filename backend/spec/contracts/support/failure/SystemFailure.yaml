@@ -1,0 +1,18 @@
+type: model
+id: SystemFailure
+version: v1
+summary: >
+  系统失败模型，用于表达系统级失败
+
+fields:
+  - name: FailureSemantic
+    type: FailureSemantic
+    ref: ./FailureSemantic.yaml
+    required: true
+    desc: 失败语义
+
+  - name: FailureCertainty
+    type: FailureCertainty
+    ref: ./FailureCertainty.yaml
+    required: true
+    desc: 结果确定性
