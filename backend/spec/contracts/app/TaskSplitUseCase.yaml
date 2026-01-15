@@ -78,7 +78,7 @@ offer:
     model: TaskSplitException
     envelope:
       model: FailureEnvelope
-      ref: ../common/FailureEnvelope.yaml
+      ref: ../support/failure/FailureEnvelope.yaml
     desc: >
       对上层可见的失败统一使用 TaskSplitException 表达；
       其对外字段协议遵循 FailureEnvelope（见 ref）。
@@ -106,7 +106,7 @@ offer:
         dimensions:
           - name: failureSemantic
             type: FailureSemantic
-            ref: ../common/FailureSemantic.yaml
+            ref: ../support/failure/FailureSemantic.yaml
         desc: >
           TaskSplitUseCase 的失败请求次数，按 FailureSemantic 维度区分失败类型；仅当对上层返回失败结果时递增。
     logs:
