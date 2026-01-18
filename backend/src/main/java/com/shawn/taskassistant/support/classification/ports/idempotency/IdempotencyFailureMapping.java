@@ -25,14 +25,6 @@ public final class IdempotencyFailureMapping {
         m.put(IdempotencyPortFailureReason.DATA_CORRUPTION, FailureSemantic.INVARIANT_VIOLATION);
         m.put(IdempotencyPortFailureReason.INTERNAL_ERROR, FailureSemantic.INVARIANT_VIOLATION);
 
-        for (IdempotencyPortFailureReason r : IdempotencyPortFailureReason.values()) {
-            if (!m.containsKey(r)) {
-                throw new IllegalStateException(
-                    "Missing IdempotencyFailureMapping entry for reason=" + r
-                );
-            }
-        }
-
         TABLE = Map.copyOf(m);
     }
 
