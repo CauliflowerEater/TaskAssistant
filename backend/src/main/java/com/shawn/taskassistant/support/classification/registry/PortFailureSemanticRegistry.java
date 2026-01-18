@@ -19,26 +19,19 @@ import java.util.Set;
  */
 public final class PortFailureSemanticRegistry {
 
-    public record Key(Class<?> portFailureType, Object reason) {
-        public Key {
-            Objects.requireNonNull(portFailureType, "portFailureType");
-            Objects.requireNonNull(reason, "reason");
-        }
-    }
+    private final Map<MappingKey, FailureSemantic> table;
 
-    private final Map<Key, FailureSemantic> table;
-
-    private PortFailureSemanticRegistry(Map<Key, FailureSemantic> table) {
+    private PortFailureSemanticRegistry(Map<MappingKey, FailureSemantic> table) {
         this.table = Collections.unmodifiableMap(new HashMap<>(table));
     }
 
     public FailureSemantic lookup(Class<?> portFailureType, Object reason) {
         Objects.requireNonNull(portFailureType, "portFailureType");
         Objects.requireNonNull(reason, "reason");
-        return table.get(new Key(portFailureType, reason));
+        return table.get(new MappingKey(portFailureType, reason));
     }
 
-    public Map<Key, FailureSemantic> snapshot() {
+    public Map<MappingKey, FailureSemantic> snapshot() {
         return table;
     }
 
@@ -47,7 +40,7 @@ public final class PortFailureSemanticRegistry {
     }
 
     public static final class Builder {
-        private final Map<Key, FailureSemantic> m = new HashMap<>();
+        private final Map<MappingKey, FailureSemantic> m = new HashMap<>();
 
         /**
          * Register a per-port mapping table.
@@ -63,7 +56,7 @@ public final class PortFailureSemanticRegistry {
                 Object reason = Objects.requireNonNull(e.getKey(), "reason");
                 FailureSemantic semantic = Objects.requireNonNull(e.getValue(), "semantic");
 
-                Key k = new Key(portFailureType, reason);
+                MappingKey k = new MappingKey(portFailureType, reason);
                 FailureSemantic prev = m.putIfAbsent(k, semantic);
 
                 // duplicate entry with different target semantic is a bug -> fail-fast
@@ -84,7 +77,7 @@ public final class PortFailureSemanticRegistry {
             Objects.requireNonNull(allReasons, "allReasons");
 
             for (Object r : allReasons) {
-                Key k = new Key(portFailureType, r);
+                MappingKey k = new MappingKey(portFailureType, r);
                 if (!m.containsKey(k)) {
                     throw new IllegalStateException(
                         "Missing semantic mapping for portFailureType=" + portFailureType.getSimpleName() + ", reason=" + r
