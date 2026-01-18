@@ -1,0 +1,13 @@
+package com.shawn.taskassistant.support.failure;
+
+public enum FailureSemantic {
+    INPUT_INVALID,
+    DEPENDENCY_TIMEOUT,
+    DEPENDENCY_RATE_LIMITED,
+    DEPENDENCY_UNAVAILABLE,
+    DEPENDENCY_BAD_REQUEST,
+    STRUCTURED_OUTPUT_INVALID,
+    INVARIANT_VIOLATION,
+    UNKNOWN
+}
+
