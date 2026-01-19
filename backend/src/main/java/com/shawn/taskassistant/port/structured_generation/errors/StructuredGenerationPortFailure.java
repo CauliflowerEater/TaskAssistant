@@ -1,5 +1,6 @@
 package com.shawn.taskassistant.port.structured_generation.errors;
 
+import com.shawn.taskassistant.port.errors.PortFailure;
 import com.shawn.taskassistant.shared.failure.FailureCertainty;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -8,7 +9,7 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class StructuredGenerationPortFailure {
+public class StructuredGenerationPortFailure implements PortFailure<StructuredGenerationPortFailureReason> {
     private StructuredGenerationPortFailureReason reason;
     private FailureCertainty certainty;
     private int attempts;
