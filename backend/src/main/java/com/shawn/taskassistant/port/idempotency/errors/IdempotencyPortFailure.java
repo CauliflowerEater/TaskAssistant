@@ -9,9 +9,24 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class IdempotencyPortFailure implements PortFailure<IdempotencyPortFailureReason> {
+public class IdempotencyPortFailure implements PortFailure {
     private IdempotencyPortFailureReason reason;
     private FailureCertainty certainty;
     private String traceId;
+
+    @Override
+    public Enum<?> reason() {
+        return reason;
+    }
+
+    @Override
+    public FailureCertainty certainty() {
+        return certainty;
+    }
+
+    @Override
+    public String traceId() {
+        return traceId;
+    }
 }
 
