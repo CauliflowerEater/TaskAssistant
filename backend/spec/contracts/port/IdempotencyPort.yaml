@@ -1,12 +1,9 @@
 type: port
 id: IdempotencyPort
-version: v1
-owner: infra
-status: draft
-since: "2026-01-08"
+
 
 summary: >
-  提供“幂等记录的占用（acquire）、并发同 key 的等待复用（wait-and-return-same-result）以及结果写回（complete）”能力；
+  提供“幂等记录的占用（acquire）、并发同 key 的（return-accepted-and-reject-request）以及结果写回（complete）”能力；
   幂等语义在 (scopeKey + idempotencyKey) 维度成立，结果可被后续重复/并发请求读取并返回同值。
 
 offer:
@@ -44,23 +41,6 @@ offer:
         - 不保证 resultPayload 的业务语义正确性（由上层保证）
 
     I4:
-      title: 并发等待能力（Wait-for-completion）与等待超时
-      desc: >
-        当 acquire 返回 kind=IN_PROGRESS（命中进行中的幂等记录）时，
-        调用方可选择显式调用 wait_for_completion，
-        以在给定 waitTimeout 内等待该记录转为 SUCCESS/FAILED；
-        等待行为由调用方编排，port 仅提供等待与状态观测能力。
-        若在 waitTimeout 内未观测到完成，
-        wait_for_completion 必须返回 WAIT_TIMEOUT，
-        并将结果确定性标记为 UNKNOWN。
-      guarantees:
-        - wait_for_completion 在 waitTimeout 内观测到 SUCCESS/FAILED 时，返回同值结果
-        - wait_for_completion 超时返回 WAIT_TIMEOUT，且 certainty=UNKNOWN
-      non_guarantees:
-        - 不承诺 acquire 会自动触发等待；等待必须由调用方显式调用 wait_for_completion
-        - 不保证一定能在 waitTimeout 内完成（取决于上层执行耗时/下游依赖）
-
-    I5:
       title: 结果写回（Complete）与状态迁移规则
       desc: >
         port 支持将幂等记录从 IN_PROGRESS 原子迁移至 SUCCESS/FAILED，并写入对应 resultPayload；
@@ -71,10 +51,10 @@ offer:
       non_guarantees:
         - 不承诺对“同 key 不同结果”的覆盖语义（默认禁止覆盖）
 
-    I6:
+    I5:
       title: IN_PROGRESS 残留与过期语义（TTL）
       desc: >
-        幂等记录应具备 TTL（expiresAt）。在记录未过期前，port 承诺对并发同 key 请求提供“同值返回”或“可等待返回”的幂等语义。
+        幂等记录应具备 TTL（expiresAt）。在记录未过期前，port 承诺对并发同 key 请求提供“同值返回”的幂等语义。
         当记录过期后，port 不再保证可返回历史结果；
         对于 IN_PROGRESS 记录，过期意味着可能存在“结果不可确认”的状态，上层需结合策略决定是否重试；port 禁止对既有记录（包含过期记录）执行“重置状态/重置 TTL/覆盖复用”等操作。若调用方需要重新触发一次新的业务执行意图，必须使用新的 idempotencyKey（在同一 scopeKey 下）。
       guarantees:
@@ -84,7 +64,7 @@ offer:
         - 不承诺也不允许将“已过期记录”视为不存在并在同一 (scopeKey, idempotencyKey) 上重新 ACQUIRE（禁止重置）；该策略应由调用方通过更换 idempotencyKey 显式表达新的执行意图
         - 不承诺对“结果不可确认”提供自动恢复路径；调用方应自行决定提示用户重试、退避或更换 idempotencyKey 再发起
 
-    I7:
+    I6:
       title: 可观测性最低承诺（本地关联）
       desc: >
         port 应支持获取 traceId 用于本地日志关联；可选择在幂等记录中持久化首个 ACQUIRED 请求的 traceId 以便排障。
@@ -134,10 +114,6 @@ offer:
           scope: (scopeKey + idempotencyKey)
           notes: >
             同一 (scopeKey, idempotencyKey) 的 acquire 可重复调用，语义稳定：返回同一条幂等记录的状态与结果。
-        consistency:
-          level: strong
-          notes: >
-            对同一幂等键的写入与读取需满足 read-your-writes，以兑现并发等待与同值返回语义。
         concurrency:
           conflict_detectable: true
           exposed_as:
@@ -151,57 +127,6 @@ offer:
         - type: IdempotencyPortFailure
           ref: ./errors/IdempotencyPortFailure.yaml
           when: 存储不可用/超时/数据损坏/内部错误等导致 port 无法履约时
-          retryable: true
-
-    - name: wait_for_completion
-      input:
-        - name: scopeKey
-          type: string
-          required: true
-          desc: 幂等域键
-        - name: idempotencyKey
-          type: string
-          required: true
-          desc: 幂等键
-        - name: waitTimeoutMs
-          type: int
-          required: true
-          desc: 等待 IN_PROGRESS 变为 SUCCESS/FAILED 的最长时间（毫秒）
-      output:
-        success:
-          type: WaitResult
-          ref: ./dto/WaitResult.yaml
-          desc: >
-            等待结果：SUCCESS/FAILED 返回 resultPayload；超时返回 WAIT_TIMEOUT 且 certainty=UNKNOWN。
-        failure:
-          type: IdempotencyPortFailure
-          ref: ./errors/IdempotencyPortFailure.yaml
-      effects:
-        - kind: read_db
-          desc: 轮询/通知等方式读取幂等记录状态直到完成或超时（实现细节不在本 port 契约中体现）
-      semantics:
-        idempotency:
-          supported: true
-          scope: (scopeKey + idempotencyKey)
-          notes: >
-            wait_for_completion 不改变记录内容，仅观察状态并在完成时返回已持久化结果。
-        consistency:
-          level: strong
-          notes: >
-            在 SUCCESS/FAILED 可见后必须可读到对应 resultPayload。
-        concurrency:
-          conflict_detectable: false
-          exposed_as:
-            kind: none
-            value: n/a
-          notes: >
-            wait_for_completion 仅观察，不进行占用或写入，因此不存在“并发冲突”语义。
-            WAIT_TIMEOUT 属于预期的成功返回分支，用于表达“结果不可确认”，而非 port 异常；
-            仅当 port 无法履约（例如存储不可用/超时/数据损坏）时，才通过 IdempotencyPortFailure 作为技术失败暴露。
-      exceptions:
-        - type: IdempotencyPortFailure
-          ref: ./errors/IdempotencyPortFailure.yaml
-          when: 存储不可用/超时/数据损坏/内部错误等导致无法读取或等待
           retryable: true
 
     - name: complete_success
