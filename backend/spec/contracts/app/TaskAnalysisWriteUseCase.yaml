@@ -1,0 +1,108 @@
+type: usecase
+id: TaskAnalysisWriteUseCase
+
+
+summary: >
+  接收用户自然语言输入（通常是一段包含多个待办/目标的描述）并写入幂等表；
+
+offer:
+  input:
+    - name: taskAnalysisWriteRequest
+      type: TaskAnalysisWriteRequestDTO
+      required: true
+      desc: 任务分析写入请求
+      ref: ./dto/taskAnalysisWriteRequestDTO.md
+
+  output:
+    success:
+      type: TaskAnalysisWriteResultDTO
+      desc: 任务分析写入结果
+      ref: ./dto/taskAnalysisWriteResultDTO.md
+    failure:
+      model: TaskAnalysisWriteException
+      desc: 任务分析写入失败
+
+  effects:
+    - name: write_idempotency_record
+      kind: write_db
+      desc: 写入幂等记录
+
+  idempotency:
+    supported: true
+    key:
+      required: true
+      name: idempotencyKey
+      scope: user
+    semantics:
+      duplicate_request: return-accepted-and-reject-request
+      concurrent_request: return-accepted-and-reject-request
+    notes: >
+      幂等语义仅在 (userId + idempotencyKey) 维度定义：
+      若未提供 userId，则幂等语义退化为（callerProvidedId + idempotencyKey），其中 callerProvidedId 由调用方在请求中稳定提供（例如通过请求头 X-User-Id），用于在未登录场景下形成幂等域；
+     	当检测到 相同 idempotencyKey 的并发请求 时，返回ACCEPTED代表已受理请求，不重复写入；
+
+  retry:
+    caller_may_retry: true
+    safe_when:
+      - same_idempotency_key
+    notes: >
+      契约使用相同 (userId + idempotencyKey) 重试是安全的；
+      除上述条件外的重试行为，其结果不在本契约的保证范围内；
+      具体的重试策略，不在契约范围内；
+
+  exceptions:
+    model: TaskAnalysisWriteException
+    envelope:
+      model: FailureEnvelope
+      ref: ../support/failure/FailureEnvelope.yaml
+    desc: >
+      对上层可见的失败统一使用 TaskAnalysisWriteException 表达；
+      其对外字段协议遵循 FailureEnvelope（见 ref）。
+      具体“失败语义 -> 错误码/异常”的映射规则在 policy.error_mapping 中定义。
+      FailureEnvelope 中的 traceId 必须与本次请求的 traceId 一致；
+
+  observability:
+    guarantee: >
+      无论成功或失败，只要进入 usecase，均产生 trace 与 metrics 记录；
+    trace:
+      required: true
+      fields:
+        - traceId
+        - userId
+    metrics:
+      - name: task_analysis_write_requests_total
+        type: counter
+        scope: usecase
+        desc: >
+          TaskAnalysisWriteUseCase 的请求总次数，每次进入 usecase 入口时递增一次，包含成功与失败请求。
+      - name: task_analysis_write_failures_total
+        type: counter
+        scope: usecase
+        dimensions:
+          - name: failureSemantic
+            type: FailureSemantic
+            ref: ../support/failure/FailureSemantic.yaml
+        desc: >
+          TaskAnalysisWriteUseCase 的失败请求次数，按 FailureSemantic 维度区分失败类型；仅当对上层返回失败结果时递增。
+    logs:
+      pii: prohibited
+      redaction: required
+
+
+assumption:
+  # Assumption 只引用下游 Offer 的条款标识，不复制内容
+  dependsOn:
+    
+
+
+
+policy:
+  
+
+  error_mapping:
+    # 仅允许引用：port 技术异常类型 / failure semantic（来自 support classifier）
+    rules:
+      - from: <FailureSemantic>          # e.g. UNKNOWN_RESULT | RETRYABLE | NON_RETRYABLE
+        to: <BusinessExceptionOrResponse>
+        note: <why>
+
