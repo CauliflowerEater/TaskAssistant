@@ -1,7 +1,7 @@
-# TaskAnalysisRequestDTO
+# TaskAnalysisWriteRequestDTO
 
 type: dto  
-id: TaskAnalysisRequestDTO  
+id: TaskAnalysisWriteRequestDTO  
 version: v1  
 summary: 任务拆分请求参数
 
