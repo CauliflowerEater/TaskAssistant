@@ -5,10 +5,6 @@ summary: >
   失败响应体，FailureEnvelope 是系统级失败协议，任何 usecase 的异常对外暴露必须映射为 FailureEnvelope，不得直接泄漏实现异常。
 
 fields:
-  - name: usecaseSemantic
-    type: string
-    required: true
-    desc: 面向开发者或用户的错误描述文本
 
   - name: failureSemantic
     type: FailureSemantic
@@ -38,9 +34,3 @@ fields:
     default: now()
     desc: >
       错误发生时间点（ISO-8601 格式），用于问题定位与审计
-
-  - name: context
-    type: map
-    required: false
-    desc: >
-      附加上下文信息（键值对），仅用于调试与日志，不应被业务逻辑依赖
