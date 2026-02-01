@@ -1,7 +1,7 @@
 package com.shawn.taskassistant.support.classification.ports.idempotency;
 
-import com.shawn.taskassistant.support.failure.FailureSemantic;
 import com.shawn.taskassistant.port.idempotency.errors.IdempotencyPortFailureReason;
+import com.shawn.taskassistant.support.failure.FailureSemantic;
 
 import java.util.EnumMap;
 import java.util.Map;
