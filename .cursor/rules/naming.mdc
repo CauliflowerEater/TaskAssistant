@@ -1,0 +1,17 @@
+---
+description: 命名禁止与约定（UseCase / Policy / Gateway）
+globs: backend/**/*.java
+alwaysApply: false
+---
+
+# Naming Rules (Strict)
+
+## Forbidden Names
+- process / handle / execute / do
+- Manager / Helper / Util
+- Common / Base / Misc
+
+## Required Naming Style
+- UseCase: Verb + DomainObject (e.g. CreateOrderUseCase)
+- Policy: Noun + Policy (e.g. DiscountPolicy)
+- Gateway: DomainObject + Gateway (e.g. InventoryGateway)

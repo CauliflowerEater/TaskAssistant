@@ -1,0 +1,16 @@
+---
+description: 契约测试优先、测试类型（契约/架构/E2E）
+globs: backend/**/*Test*.java
+alwaysApply: false
+---
+
+# Testing Rules
+
+## Contract Tests First
+- Write tests before or alongside implementations
+- Tests define system behavior and serve as documentation
+
+## Test Types
+- Contract Tests: required
+- Architecture Tests: required
+- E2E Tests: minimal and critical paths only

@@ -1,0 +1,21 @@
+---
+description: 项目核心目标与 AI 输出风格
+alwaysApply: true
+---
+
+# Core Goal & AI Output Style
+
+## Core Goal
+- Minimize human cognitive load
+- Humans should understand the system by reading:
+  - Class names
+  - Method names
+  - Interfaces
+  - Contract comments
+  - Tests
+- Humans should NOT need to read implementation details.
+
+## AI Output Style
+- Prefer clarity over cleverness
+- Prefer explicit over implicit
+- Prefer readability over micro-optimizations

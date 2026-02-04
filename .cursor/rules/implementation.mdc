@@ -1,0 +1,11 @@
+---
+description: 强类型、无隐式行为、实现可自由变更
+globs: backend/**/*.java
+alwaysApply: false
+---
+
+# Implementation Rules
+
+- Prefer strong typing over maps or generic objects
+- Avoid implicit behavior and hidden side effects
+- Implementations may change freely as long as contracts and tests pass

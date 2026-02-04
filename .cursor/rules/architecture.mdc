@@ -1,0 +1,28 @@
+---
+description: 分层与依赖、放置规则
+globs: backend/**/*.java
+alwaysApply: false
+---
+
+# Architecture Rules
+
+## Layering
+- api/: Controllers, DTOs, Error definitions
+- domain/: Entities, Value Objects, Policies, (optional) domain services (pure logic)
+- app/: UseCase implementations / orchestration only (workflow, transactions, progress updates)
+- port/: Interfaces (Ports/Gateways) for external capabilities used by app/domain (DB/HTTP/MQ/Redis/LLM/VectorStore/File, etc.)
+- infra/: Implementations (Adapters) of port interfaces: DB, HTTP, MQ, Redis, third-party SDKs, file IO
+- support/: Cross-cutting concerns and configuration: logging, metrics, tracing, AOP/advisors, constants, @ConfigurationProperties, feature flags, wiring helpers
+
+## Dependency rules (MUST)
+- api -> app
+- app -> domain + port
+- domain -> (no dependencies on api/app/infra/support)
+- port -> (no dependencies on infra; keep framework-free as much as possible)
+- infra -> port (+ domain types if needed)
+- support may be used by api/app/infra (avoid using it from domain; keep domain pure)
+
+## Placement rules (MUST NOT)
+- domain MUST NOT import Spring/DB/HTTP SDKs
+- port MUST NOT reference concrete implementations
+- infra MUST NOT be referenced by api/app/domain directly (only via port)
