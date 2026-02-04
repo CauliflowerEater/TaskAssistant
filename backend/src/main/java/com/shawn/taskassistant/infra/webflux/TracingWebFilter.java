@@ -34,6 +34,9 @@ public class TracingWebFilter implements WebFilter {
     root.setAttribute("http.method", httpMethod);
     root.setAttribute("http.route", req.getPath().value());
 
+    String traceId = root.getSpanContext().getTraceId();
+    exchange.getAttributes().put(ContextKeys.EXCHANGE_TRACE_ID, traceId);
+
     return chain.filter(exchange)
         .contextWrite(ctx -> ctx.put(ContextKeys.CTX_SPAN, root))
         .doOnError(err -> {
