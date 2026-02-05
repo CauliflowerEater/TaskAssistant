@@ -1,4 +1,4 @@
-package com.shawn.taskassistant.infra.webflux;
+package com.shawn.taskassistant.infra.web.webflux;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;

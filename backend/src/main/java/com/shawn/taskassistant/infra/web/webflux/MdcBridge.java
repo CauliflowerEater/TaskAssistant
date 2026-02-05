@@ -1,4 +1,4 @@
-package com.shawn.taskassistant.infra.webflux;
+package com.shawn.taskassistant.infra.web.webflux;
 
 import io.opentelemetry.api.trace.Span;
 import org.slf4j.MDC;
