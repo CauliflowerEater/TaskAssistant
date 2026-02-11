@@ -1,43 +1,47 @@
-Policy：幂等记录的双重超时语义
+幂等表在系统中的定位是：
 
-1. 基本约定
+1. 对于API调用的幂等去重；
+2. 充当producer和worker之间的消息队列；
+3. 充当结果的缓存；
 
-幂等记录存在两类语义不同的超时约束，二者解决的问题不同，责任边界不同，必须明确区分，不得混用。
+幂等表的字段：
 
+- id
+- task_id
+- scope
+- idem_key
+- status
+- created_at, updated_at, finished_at
+- owner_id, lease_util
+- execute_id
+- attempts, next_retry_at
+- result_payload
+- error_code, error_message
+- expire_at
+- trace_id
 
-2. 幂等记录的业务有效期（Record TTL）
+id 为自增的逻辑主键；
+task_id为业务键，调用方在发起创建请求后服务端会返回task_id，后调用方持task_id轮询执行的结果；
 
-语义
-业务有效期用于判断一条幂等记录在业务上是否仍具备完成意义。
-当幂等记录自创建时刻起超过该有效期，即视为业务上无意义，不应再被执行或重试。
+scope为幂等域，设计上是userId;
+idem_key是由调用方提供的幂等键，在scope内唯一；
+scope+idem_key需满足unique约束；
 
-Policy 约束
-	•	业务有效期属于业务规则，应在 Domain / UseCase Policy 中明确声明。
-	•	业务有效期超时属于业务终态，应以明确状态体现，而非系统异常。
-	•	超过业务有效期的幂等记录不得触发外部副作用（如 LLM 调用）。
+status为状态机，见下文状态机设计；
 
-责任划分
-	•	Policy 负责定义业务有效期的语义及其后果。
-	•	超时的判断时机与具体处理方式由应用层或消费机制负责实现。
+owner_id为消费worker的id，设计上worker需要将自己的worker_id cas写入记录用于站位；
+lease_util为worker占用记录的租期，在worker抢占时同时写入；
 
-⸻
+execute_id是worker请求AI服务后由AI服务端返回的业务id，worker会用这个execute_id向AI服务端轮询，该id会被抢锁worker复用；
 
-3. 幂等记录的消费占有超时（Processing Lease）
+attempts代表当前记录的消费尝试次数，初始为0，每取锁成功一次加一；
+next_retry_at 待定，或许会取消
 
-语义
-消费占有超时用于限制单次消费执行的最长占有时间，以防止异常情况下幂等记录被长期占有而无法继续推进。
+result_payload worker在消费幂等记录后会将结果回写到result_payload；
 
-Policy 约束
-	•	消费占有超时仅用于保障执行机制的可恢复性，不代表业务失败。
-	•	消费占有超时不得直接导致幂等记录进入业务失败或终态。
+error_code代表约定的异常字段
+error_message为截断的异常信息（前100字符），用于向前暴露；
 
-责任划分
-	•	消费占有超时不属于领域规则，不应定义在 Domain 层。
-	•	其判断与回收策略由消费机制负责。
+expire_at字段用用于表示幂等记录的过期时间；
 
-⸻
-
-4. 语义区分声明（强约束）
-	•	业务有效期用于回答：该任务是否还值得完成。
-	•	消费占有超时用于回答：当前这次执行是否仍然可信。
-	•	两类超时语义独立，任何实现不得使用单一机制或单一字段同时表达上述两种含义。
+trace_id 观测字段；
